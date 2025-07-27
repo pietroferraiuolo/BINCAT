@@ -122,17 +122,17 @@ class SkyMap():
         - J
         - H
         - Ks
-        - W1
-        - W2
-        - W3
-        - W4
-        - I1
-        - I2
-        - I3
-        - I4
-        - M1
-        - M2
-        - M3
+        - W1 (bandwidth missing)
+        - W2 (bandwidth missing)
+        - W3 (bandwidth missing)
+        - W4 (bandwidth missing)
+        - I1 (bandwidth missing)
+        - I2 (bandwidth missing)
+        - I3 (bandwidth missing)
+        - I4 (bandwidth missing)
+        - M1 (bandwidth missing)
+        - M2 (bandwidth missing)
+        - M3 (bandwidth missing)
         - u_SDSS
         - g_SDSS
         - r_SDSS
@@ -142,9 +142,10 @@ class SkyMap():
         Default is 'Gaia_G'.
     """
     
-    def __init__(self, band: str = 'Gaia_G'):
+    def __init__(self, band: str = 'Gaia_G', map_noise: float = 5.0):
         """The constructor"""
         self._bands = _qt.read('data/bands.fits')
+        self.map_noise = map_noise
     
     def create_single_star_sky_map(self, M: float, shape: tuple[int,int]) -> _np.ndarray:
         """
@@ -164,11 +165,10 @@ class SkyMap():
         numpy.ndarray
             The generated sky map.
         """
-        noise = 10 # some noise
         flux = self._compute_star_flux(M)
-        sky_map = _np.random.poisson(noise, shape)
-        center_y, center_x = shape[0] // 2, shape[1] // 2
-        sky_map[center_y, center_x] += flux
+        sky_map = _np.random.poisson(self.map_noise, shape)
+        center_y, center_x = (shape[0] // 2, shape[1] // 2)
+        sky_map[center_y, center_x] += flux.value
         return sky_map
     
     def _band_flux(self) -> _u.Quantity:
@@ -181,10 +181,9 @@ class SkyMap():
             Photon flux in photons per second per cm².
         """
         from astropy.constants import h, c
-        f_nu_0 = 3597.28 * _u.Jy  # Standard zero-point in Janskys
-        # V-band effective wavelength and bandwidth
-        lambda_eff = 550 * _u.nm
-        delta_lambda = 88 * _u.nm
+        f_nu_0 = self._bands['zero_point'] # Standard zero-point in Janskys
+        lambda_eff = self._bands['wavelength'].to(_u.nm)
+        delta_lambda = self._bands['bandwidth'].to(_u.nm) 
         f_lambda = f_nu_0 * c / lambda_eff**2
         energy_flux = f_lambda * delta_lambda
         photon_energy = h * c / lambda_eff
