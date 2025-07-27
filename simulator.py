@@ -4,6 +4,7 @@ import astropy.units as _u
 from astropy import convolution as _c
 from typing import Any as _any
 from astropy.table import QTable as _qt
+import matplotlib.pyplot as _plt
 
 
 class GaiaTelescopeV0():
@@ -30,7 +31,7 @@ class GaiaTelescopeV0():
     
     def __init__(self, **kwargs: dict[str,_any]):
         """The constructor"""
-        self._osys = self.__create_optical_system(kwargs)
+        self._osys = self.__create_optical_system(**kwargs)
         self.psf = self._compute_psf()
         self.speed = 59.9641857803 * _u.arcsec / _u.s
         self.period = (6 * _u.hour).to(_u.s)
@@ -58,25 +59,65 @@ class GaiaTelescopeV0():
         # Convolve the sky map with the PSF
         convolved_image = _c.convolve_fft(sky_map, self.psf, boundary='wrap')
         # Compute the TDI integration
-        n_steps = int(self.field_of_view.to(_u.arcsec).value / self.pixscale_x.to(_u.arcsec).value)
-        px_per_step = int(self.pixscale_x.to(_u.arcsec).value / self.field_of_view.to(_u.arcsec).value * self.pscale_fact)
+        n_steps = int(self.field_of_view.value / self.pixscale_x.value)
+        print(n_steps)
+        px_per_step = int(1/(self.pixscale_x.value / self.field_of_view.value * self.pscale_fact))
+        print(px_per_step)
         for i in range(1,n_steps):
+            print(i, f"shift={i*px_per_step}")
             convolved_image += _np.roll(convolved_image, shift=i*px_per_step, axis=1)
         return convolved_image
     
 
-    def display_psf(self):
-        """Display the PSF of the Gaia telescope."""
+    def display_psf(self, mode:str = '2d', **kwargs: dict[str,_any]) -> None:
+        """Display the PSF of the Gaia telescope.
+        
+        Parameters
+        ----------
+        mode : str, optional
+            The mode of display. Options are '2d' for 2D display and 'x' or 'y' for
+            relative axes PSFs.
+            Default is '2d'.
+        **kwargs : dict, optional
+            Additional keyword arguments to pass to the display function.
+        """
         if self.psf is None:
             raise ValueError("PSF has not been computed yet.")
-        _poppy.display_psf(self.psf, title="Gaia Telescope PSF", 
-                           cmap='gray', colorbar=True, 
-                           show=False, scale=self.pixscale_x)
+        if mode == '2d':
+            _poppy.display_psf(self._psf, title="Gaia Telescope PSF", **kwargs)
+        elif mode == 'x':
+            psf_x = _np.sum(self.psf, axis=1)
+            psf_x /= _np.sum(psf_x)  # normalize
+            x = _np.arange(len(psf_x))* _u.pixel
+            x -= len(x) // 2 * _u.pixel  # center the x-axis
+            x *= self.pixscale_x
+            _plt.figure()
+            _plt.plot(x, psf_x)
+            _plt.title("Gaia Telescope PSF in x direction")
+            _plt.xlabel("acrsec")
+            _plt.ylabel("Normalized PSF")
+            _plt.grid(linestyle='--')
+            _plt.show()
+        elif mode == 'y':
+            psf_y = _np.sum(self.psf, axis=0)
+            psf_y /= _np.sum(psf_y)
+            y = _np.arange(len(psf_y)) * _u.pixel
+            y -= len(y) // 2 * _u.pixel # center the y-axis
+            y *= self.pixscale_y
+            _plt.figure()
+            _plt.plot(y, psf_y)
+            _plt.title("Gaia Telescope PSF in y direction")
+            _plt.xlabel("arcsec")
+            _plt.ylabel("Normalized PSF")
+            _plt.grid(linestyle='--')
+            _plt.show()
+        else:
+            raise ValueError("Invalid mode. Use '2d', 'x', or 'y'.")
 
     def _compute_psf(self):
         """Compute the PSF of the Gaia telescope."""
-        psf = self._osys.calc_psf(self.wavel_pfs)
-        img = psf[0].data
+        self._psf = self._osys.calc_psf(self.wavel_pfs)
+        img = self._psf[0].data
         final_psf = _poppy.utils.rebin_array(img, (1,self.pscale_fact))
         return final_psf
 
@@ -90,7 +131,7 @@ class GaiaTelescopeV0():
         self.apert_h      = _get_kwargs(('aperture_height', 'height', 'aperture_h', 'apert_h'), 0.5, kwargs) * _u.m
         self.pixscale_x   = _get_kwargs(('pixel_scale_x', 'pixscale_x', 'pixelscale_x'), 0.05, kwargs) * _u.arcsec / _u.pixel
         self.pscale_fact  = _get_kwargs(('pixel_scale_factor', 'pscale_fact', 'pscale_factor'), 2, kwargs)
-        self.field_ofview = _get_kwargs(('field_of_view', 'fov', 'field_ofview'), 5, kwargs) * _u.arcsec
+        self.field_of_view= _get_kwargs(('field_of_view', 'fov', 'field_ofview'), 5, kwargs) * _u.arcsec
         self.wavel_pfs    = _get_kwargs(('wavelength_pfs', 'wavel_pfs', 'wavelength'), 550e-9, kwargs) * _u.m
         # Setting the pixel scale in y direction
         self.pixscale_y = self.pixscale_x * self.pscale_fact
@@ -98,7 +139,7 @@ class GaiaTelescopeV0():
         optic = _poppy.RectangleAperture(width=self.apert_w, height=self.apert_h)
         osys.add_pupil(optic)
         # Creating the detector 
-        osys.add_detector(pixelscale=self.pixscale_x, fov_arcsec=self.field_ofview)
+        osys.add_detector(pixelscale=self.pixscale_x, fov_arcsec=self.field_of_view)
         return osys
 
 
@@ -145,6 +186,9 @@ class SkyMap():
     def __init__(self, band: str = 'Gaia_G', map_noise: float = 5.0):
         """The constructor"""
         self._bands = _qt.read('data/bands.fits')
+        self._bands = self._bands[self._bands['band'] == band]
+        if len(self._bands) == 0:
+            raise ValueError(f"Band '{band}' not found in the bands table.")
         self.map_noise = map_noise
     
     def create_single_star_sky_map(self, M: float, shape: tuple[int,int]) -> _np.ndarray:
@@ -155,10 +199,8 @@ class SkyMap():
         ----------
         flux : float
             Total counts for the star.
-        background : float
-            Mean background value.
         shape : tuple of int
-            Shape of the sky map (height, width).
+            Shape of the sky map (height, width) in pixels.
 
         Returns
         -------
