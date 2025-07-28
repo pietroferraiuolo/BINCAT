@@ -59,9 +59,13 @@ class GaiaTelescopeV0():
         # Convolve the sky map with the PSF
         convolved_image = _c.convolve_fft(sky_map, self.psf, boundary='wrap')
         # Compute the TDI integration
-        n_steps = int(self.field_of_view.value / self.pixscale_x.value)
+        try:
+            al = self.field_of_view[0]
+        except TypeError:
+            al = self.field_of_view
+        n_steps = 5#int(al.value / self.pixscale_x.value)
         print(n_steps)
-        px_per_step = int(1/(self.pixscale_x.value / self.field_of_view.value * self.pscale_fact))
+        px_per_step = int(1/(self.pixscale_x.value / al.value * self.pscale_fact)/60)
         print(px_per_step)
         for i in range(1,n_steps):
             print(i, f"shift={i*px_per_step}")
@@ -129,9 +133,9 @@ class GaiaTelescopeV0():
         # If not passed, the default values will be used.
         self.apert_w      = _get_kwargs(('aperture_width', 'width', 'aperture_w', 'apert_w'), 1.5, kwargs) * _u.m
         self.apert_h      = _get_kwargs(('aperture_height', 'height', 'aperture_h', 'apert_h'), 0.5, kwargs) * _u.m
-        self.pixscale_x   = _get_kwargs(('pixel_scale_x', 'pixscale_x', 'pixelscale_x'), 0.05, kwargs) * _u.arcsec / _u.pixel
-        self.pscale_fact  = _get_kwargs(('pixel_scale_factor', 'pscale_fact', 'pscale_factor'), 2, kwargs)
-        self.field_of_view= _get_kwargs(('field_of_view', 'fov', 'field_ofview'), 5, kwargs) * _u.arcsec
+        self.pixscale_x   = _get_kwargs(('pixel_scale_x', 'pixscale_x', 'pixelscale_x'), 0.059, kwargs) * _u.arcsec / _u.pixel
+        self.pscale_fact  = _get_kwargs(('pixel_scale_factor', 'pscale_fact', 'pscale_factor'), 3, kwargs)
+        self.field_of_view= _get_kwargs(('field_of_view', 'fov_arcsecs', 'fov_pixels'), 5 * _u.arcsec, kwargs) 
         self.wavel_pfs    = _get_kwargs(('wavelength_pfs', 'wavel_pfs', 'wavelength'), 550e-9, kwargs) * _u.m
         # Setting the pixel scale in y direction
         self.pixscale_y = self.pixscale_x * self.pscale_fact
