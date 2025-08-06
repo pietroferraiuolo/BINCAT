@@ -89,40 +89,38 @@ class GaiaTelescopeV0(_poppy.Instrument):
             raise ValueError("PSF has not been computed yet.")
         if mode == "2d":
             _poppy.display_psf(self._psf, title="Gaia Telescope PSF", **kwargs)
-        elif mode == "x":
-            psf_x = _np.sum(self.psf, axis=1)
-            psf_x /= _np.sum(psf_x)  # normalize
-            x = _np.arange(len(psf_x)) * _u.pixel
-            x -= len(x) // 2 * _u.pixel  # center the x-axis
-            x *= self.pixscale_x
-            _plt.figure()
-            _plt.plot(x, psf_x)
-            _plt.title("Gaia Telescope PSF in x direction")
-            _plt.xlabel("acrsec")
-            _plt.ylabel("Normalized PSF")
-            _plt.grid(linestyle="--")
-            _plt.show()
+            return
+        _plt.figure()
+        _plt.xlabel("acrsec")
+        _plt.ylabel("Normalized PSF")
+        _plt.grid(linestyle="--")
+        y = _np.arange(len(self.psf_y)) * _u.pixel
+        y -= len(y) // 2 * _u.pixel  # center the y-axis
+        y *= self.pixscale_y
+        x = _np.arange(len(self.psf_x)) * _u.pixel
+        x -= len(x) // 2 * _u.pixel  # center the x-axis
+        x *= self.pixscale_x 
+        _plt.plot(x, self.psf_x)
+        if mode == "x":
+            _plt.plot(x, self.psf_x)
         elif mode == "y":
-            psf_y = _np.sum(self.psf, axis=0)
-            psf_y /= _np.sum(psf_y)
-            y = _np.arange(len(psf_y)) * _u.pixel
-            y -= len(y) // 2 * _u.pixel  # center the y-axis
-            y *= self.pixscale_y
-            _plt.figure()
-            _plt.plot(y, psf_y)
-            _plt.title("Gaia Telescope PSF in y direction")
-            _plt.xlabel("arcsec")
-            _plt.ylabel("Normalized PSF")
-            _plt.grid(linestyle="--")
-            _plt.show()
+            _plt.plot(y, self.psf_y)
         else:
             raise ValueError("Invalid mode. Use '2d', 'x', or 'y'.")
+        _plt.show()
+        _plt.title(f"Gaia Telescope PSF in {mode} direction")
 
     def _compute_psf(self):
         """Compute the PSF of the Gaia telescope."""
         self._psf = self._osys.calc_psf(self.wavel_pfs)
         img = self._psf[0].data
         final_psf = _poppy.utils.rebin_array(img, (1, self.pscale_fact))
+        psf_x = _np.sum(self.psf, axis=1)
+        psf_x /= _np.sum(psf_x)  # normalize
+        psf_y = _np.sum(self.psf, axis=0)
+        psf_y /= _np.sum(psf_y)
+        self.psf_x = psf_x
+        self.psf_y = psf_y
         return final_psf
 
     def __create_optical_system(self, **kwargs: dict[str, _any]):
@@ -151,7 +149,7 @@ class GaiaTelescopeV0(_poppy.Instrument):
             ("pixel_scale_factor", "pscale_fact", "pscale_factor"), 3, kwargs
         )
         self.field_of_view = _get_kwargs(
-            ("field_of_view", "fov_arcsecs", "fov_pixels"), 5 * _u.arcsec, kwargs
+            ("field_of_view", "fov_arcsecs"), 5 * _u.arcsec, kwargs
         )
         self.wavel_pfs = (
             _get_kwargs(("wavelength_pfs", "wavel_pfs", "wavelength"), 550e-9, kwargs)
