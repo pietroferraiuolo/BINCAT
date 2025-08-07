@@ -261,7 +261,7 @@ Integration time: {self.tdi}
         _plt.legend()
         _plt.show()
 
-    def create_binary_cube(
+    def create_raw_binary_cube(
         self,
         M1: float | _u.Quantity,
         M2: float | _u.Quantity,
@@ -297,12 +297,14 @@ Integration time: {self.tdi}
         center = (shape[0] // 2, shape[1] // 2)
         _map = _np.zeros(shape, dtype=float)
         star1 = self._compute_star_flux(
-            M1, collecting_area=collecting_area, t=t_integration
+            M1,
+            collecting_area=collecting_area,
+            integration_time=t_integration
         )
         companion = self._compute_star_flux(
             M2,
             collecting_area=collecting_area,
-            t=t_integration,
+            integration_time=t_integration,
         )
         ring = self._create_ring(radius=distance, shape=shape)
         _map[center] += star1
@@ -312,8 +314,8 @@ Integration time: {self.tdi}
             mapp = _np.copy(_map)
             mapp[x, y] += companion
             # Add Poisson noise to the map
-            noise = _np.random.poisson(_np.random.uniform(0.5, 5, 1), size=mapp.shape)
-            mapp += noise
+            # noise = _np.random.poisson(_np.random.uniform(0.5, 5, 1), size=mapp.shape)
+            # mapp += noise
             pos_cube.append(mapp)
         pos_cube = _np.dstack(pos_cube)
         pos_cube = _np.rollaxis(pos_cube, -1)
@@ -349,14 +351,13 @@ Integration time: {self.tdi}
         magnitude_factor = 10 ** (-0.4 * mag_values)
         photon_flux = base_flux * magnitude_factor
         tot_photons = photon_flux*collecting_area*integration_time # n_photons collected
-        if tot_photons < 1:
+        if tot_photons.value < 1:
             import warnings
-            warnings.WarningMessage(
-                "The number of photons collected is less than 1. "
-                "This may lead to inaccurate results.",
-                RuntimeWarning
+            warnings.warn(
+                message="The number of photons collected is less than 1. This may lead to inaccurate results.",
+                category=RuntimeWarning
             )
-        return _np.minimum(1, tot_photons)
+        return _np.maximum(1, tot_photons.value)
 
     def _band_flux(self) -> _u.Quantity:
         """
