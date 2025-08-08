@@ -1,4 +1,4 @@
-import numpy as _np
+import xupy as _np
 import poppy as _poppy
 import astropy.units as _u
 from astropy import convolution as _c
@@ -51,6 +51,71 @@ class GaiaTelescopeV0():
         self.precession_period = (63 * _u.day).to(_u.s)
         self.__create_optical_system(**kwargs)
         self.psf = self._compute_psf()
+        
+    
+    def binary_map(
+        self,
+        M1: float | _u.Quantity,
+        M2: float | _u.Quantity,
+        distance: float | _u.Quantity,
+        collecting_area: float | _u.Quantity,
+        t_integration: float | _u.Quantity = 4.42 * _u.s,
+        shape: tuple[int, int] = (220, 220),
+    ) -> _np.ndarray:
+        """
+        Create a cube of images of a binary star system.
+
+        Parameters
+        ----------
+        M1 : float or u.Quantity
+            Magnitude of the central star.
+        M2 : float or u.Quantity
+            Magnitude of the companion star.
+        distance : float or u.Quantity
+            Distance to the binary system in mas.
+        collecting_area : float or u.Quantity
+            Collecting area of the telescope in cm².
+        t_integration : float or u.Quantity, optional
+            Integration time in seconds. Default is 4.42 seconds.
+        shape : tuple of int, optional
+            Shape of the sky map (height, width). Default is (220, 220).
+
+        Returns
+        -------
+        numpy.ndarray
+            The binary cube with the star at the center.
+        """
+        return self.ccd.create_raw_binary_cube(
+            M1, M2, distance, collecting_area, t_integration, shape
+        )
+        
+    
+    def acquire_sky(
+        self,
+        binary_cube: _np.ndarray,
+    ):
+        """
+        Acquire the binary sistems generated sky map through the
+        modelled CCD.
+        
+        Parameters
+        ----------
+        binary_cube : numpy.ndarray
+            The binary cube with the star at the center.
+        
+        Returns
+        -------
+        numpy.ndarray
+            The sky map acquired by the CCD.
+        """
+        for img in binary_cube:
+            img = _poppy.utils.rebin_array(img, (1, self.ccd.pxscale_x.value))
+            img = _c.convolve(img, self._psf[0], boundary="wrap")
+            img *= self.ccd.pixel_area.value
+            img /= self.ccd.tdi.value
+            yield img
+        
+        
 
 
     def display_psf(self, mode: str = "2d", **kwargs: dict[str, _any]) -> None:
@@ -110,33 +175,18 @@ class GaiaTelescopeV0():
         osys = _poppy.OpticalSystem()
         # Getting the optical parameters from kwargs
         # If not passed, the default values will be used.
-        self.apert_w = (
-            _get_kwargs(
-                ("aperture_width", "width", "aperture_w", "apert_w"), 1.5, kwargs
-            )
-            * _u.m
+        self.apert_w = _get_kwargs(
+            ("aperture_width", "width", "aperture_w", "apert_w"), 1.5* _u.m, kwargs
         )
-        self.apert_h = (
-            _get_kwargs(
-                ("aperture_height", "height", "aperture_h", "apert_h"), 0.5, kwargs
-            )
-            * _u.m
+        self.apert_h =_get_kwargs(
+            ("aperture_height", "height", "aperture_h", "apert_h"), 0.5* _u.m, kwargs
         )
         self.pixscale_x = (
-            _get_kwargs(("pixel_scale_x", "pixscale_x", "pixelscale_x"), 0.059, kwargs)
-            * _u.arcsec
-            / _u.pixel
+            _get_kwargs(("pixel_scale_x", "pixscale_x", "pixelscale_x"), 0.059*_u.arcsec/_u.pixel, kwargs)
         )
-        self.pscale_fact = _get_kwargs(
-            ("pixel_scale_factor", "pscale_fact", "pscale_factor"), 3, kwargs
-        )
-        self.field_of_view = _get_kwargs(
-            ("field_of_view", "fov_arcsecs"), 5 * _u.arcsec, kwargs
-        )
-        self.wavel_pfs = (
-            _get_kwargs(("wavelength_pfs", "wavel_pfs", "wavelength"), 550e-9, kwargs)
-            * _u.m
-        )
+        self.pscale_fact = _get_kwargs(("pixel_scale_factor", "pscale_fact", "pscale_factor"), 3, kwargs)
+        self.field_of_view = _get_kwargs(("field_of_view", "fov_arcsecs"), 5 * _u.arcsec, kwargs)
+        self.wavel_pfs =_get_kwargs(("wavelength_pfs", "wavel_pfs", "wavelength"), 550e-9* _u.m, kwargs)
         band = kwargs.get('band', 'Gaia_G')
         ccdpx = _get_kwargs(
             ("ccd_pixels", "tot_ccd_pixels", "ccdpxs", "ccd_pxs"), [4500*_u.pixel,1966*_u.pixel], kwargs
@@ -268,7 +318,7 @@ Integration time: {self.tdi}
         distance: float | _u.Quantity,
         collecting_area: float | _u.Quantity,
         t_integration: float | _u.Quantity,
-        shape: tuple[int, int] = (220, 220),
+        shape: tuple[int, int] = (512, 512),
     ) -> _np.ndarray:
         """
         Create a cube of images of a binary star system, in which each image corresponds
@@ -290,12 +340,12 @@ Integration time: {self.tdi}
         numpy.ndarray
             The binary cube with the star at the center.
         """
-        if any([s < distance * 2 for s in list(shape)]):
+        if any([s < distance for s in list(shape)]):
             raise ValueError(
                 f"Map shape must be larger than twice the distance of the binary system: {shape} < {distance*2}"
             )
         center = (shape[0] // 2, shape[1] // 2)
-        _map = _np.zeros(shape, dtype=float)
+        _map = _np.zeros(shape, dtype=_np.float32)
         star1 = self._compute_star_flux(
             M1,
             collecting_area=collecting_area,
