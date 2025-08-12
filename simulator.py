@@ -114,8 +114,6 @@ class GaiaTelescopeV0():
             img *= self.ccd.pixel_area.value
             img /= self.ccd.tdi.value
             yield img
-        
-        
 
 
     def display_psf(self, mode: str = "2d", **kwargs: dict[str, _any]) -> None:
