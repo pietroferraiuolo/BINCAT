@@ -406,7 +406,7 @@ Integration time: {self.tdi}
                 message="The number of photons collected is less than 1. This may lead to inaccurate results.",
                 category=RuntimeWarning
             )
-        return _np.maximum(1, tot_photons.value)
+        return _np.np.maximum(1, tot_photons.value)
 
     def _band_flux(self) -> _u.Quantity:
         """
