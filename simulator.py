@@ -7,6 +7,7 @@ from astropy.table import QTable as _qt
 import matplotlib.pyplot as _plt
 
 
+
 class GaiaTelescopeV0():
     """
     Class to simulate the Gaia telescope PSF.
