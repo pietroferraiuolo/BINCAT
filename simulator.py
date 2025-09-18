@@ -7,6 +7,8 @@ from astropy import convolution as _c
 from utils import load_fits, save_fits, _Any, _fits, Logger
 from astropy.table import QTable as _qt
 import matplotlib.pyplot as _plt
+import multiprocessing as _mp
+import gc
 _l = Logger()
 
 class GaiaTelescope:
@@ -393,12 +395,12 @@ class BinarySystem:
         ccd : CCD
             The CCD to use for the observation.
         """
-        import gc
         check = self._check_everything_is_fine(ccd)
         convolved_cube = []
         _l.log("Starting convolution computation on cube...", level="INFO")
-        for img in self._cube:
-            print(f"Position {len(convolved_cube)+1} / {self._cube.shape[0]}", end="\r", flush=True)
+        from tqdm import tqdm
+
+        for img in tqdm(self._cube, desc="Observing", unit="config"):
             if check == 'pad':
                 xdiff = ccd.psf.shape[1] - img.shape[1]
                 ydiff = ccd.psf.shape[0] - img.shape[0]
@@ -411,8 +413,7 @@ class BinarySystem:
             convolved_cube.append(ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3))[0])
             del noisy
             gc.collect()
-            if len(convolved_cube) == 2:
-                return convolved_cube
+
         _l.log("Convolution complete.", level="INFO")
         outcube = _np.dstack(convolved_cube)
         outcube = _np.rollaxis(outcube, -1)
@@ -669,3 +670,37 @@ def _get_kwargs(names: tuple[str], default: _Any, kwargs: dict[str, _Any]) -> _A
         if key in kwargs:
             return kwargs[key]
     return default
+
+
+class _Convolver():
+    
+    def __init__(self, ccd: CCD = None):
+        self.psf = ccd.psf
+        self.ccd = ccd
+
+    def convolve(self, img):
+        """
+        Convolve the input image with the PSF.
+    
+        Parameters
+        ----------
+        img : numpy.ndarray
+            The input image to convolve.
+
+        Returns
+        -------
+        numpy.ndarray
+            The convolved image.
+        """
+        xdiff = self.psf.shape[1] - img.shape[1]
+        ydiff = self.psf.shape[0] - img.shape[0]
+        img = _np.pad(img, ((ydiff//2, ydiff//2), (xdiff//2, xdiff//2)), mode='constant')
+        convolved = _c.convolve_fft(img, self.psf, boundary='wrap', normalize_kernel=False, allow_huge=True)
+        # Add Poisson noise to the convolved image
+        noisy = _np.random.poisson(convolved).astype(_np.float32)
+        del convolved
+        gc.collect()
+        fin_psf = ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3))[0]
+        del noisy
+        gc.collect()
+        return fin_psf
