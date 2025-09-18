@@ -112,7 +112,7 @@ class Logger():
     
     def __init__(self, level: int = _l.INFO) -> None:
         """The constructor"""
-        self._l = self._set_up_logger(level=level)
+        self._l = self._set_up_logger(logging_level=level)
         
     def _set_up_logger(self, logging_level: int = _l.INFO) -> _l.Logger:
         """

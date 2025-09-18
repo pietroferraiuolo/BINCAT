@@ -393,22 +393,26 @@ class BinarySystem:
         ccd : CCD
             The CCD to use for the observation.
         """
-        if not hasattr(self, "_cube"):
-            _l.log("Cube has not been created yet. Use 'create_raw_binary_cube' method.", level="ERROR")
-            raise AttributeError(
-                "Cube has not been created yet. Use 'create_raw_binary_cube' method."
-            )
-        if ccd.psf is None:
-            _l.log("CCD PSF has not been computed yet.", level="ERROR")
-            raise ValueError("CCD PSF has not been computed yet.")
+        import gc
+        check = self._check_everything_is_fine(ccd)
         convolved_cube = []
         _l.log("Starting convolution computation on cube...", level="INFO")
         for img in self._cube:
             print(f"Position {len(convolved_cube)+1} / {self._cube.shape[0]}", end="\r", flush=True)
+            if check == 'pad':
+                xdiff = ccd.psf.shape[1] - img.shape[1]
+                ydiff = ccd.psf.shape[0] - img.shape[0]
+                img = _np.pad(img, ((ydiff//2, ydiff//2), (xdiff//2, xdiff//2)), mode='constant')
             convolved = _c.convolve_fft(img, ccd.psf, boundary='wrap', normalize_kernel=False, allow_huge=True)
             # Add Poisson noise to the convolved image
             noisy = _np.random.poisson(convolved).astype(_np.float32)
-            convolved_cube.append(ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3)))
+            del convolved
+            gc.collect()
+            convolved_cube.append(ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3))[0])
+            del noisy
+            gc.collect()
+            if len(convolved_cube) == 2:
+                return convolved_cube
         _l.log("Convolution complete.", level="INFO")
         outcube = _np.dstack(convolved_cube)
         outcube = _np.rollaxis(outcube, -1)
@@ -507,6 +511,24 @@ class BinarySystem:
         self._cube = pos_cube
         if out:
             return pos_cube
+        
+    def _check_everything_is_fine(self, ccd: CCD) -> None:
+        """
+        Check if everything is fine before observing the binary system with the CCD.
+        """
+        if not hasattr(self, "_cube"):
+            _l.log("Cube has not been created yet. Use 'create_raw_binary_cube' method.", level="ERROR")
+            raise AttributeError(
+                "Cube has not been created yet. Use 'create_raw_binary_cube' method."
+            )
+        if ccd.psf is None:
+            _l.log("CCD PSF has not been computed yet.", level="ERROR")
+            raise ValueError("CCD PSF has not been computed yet.")
+        if not self._cube.shape[1:] == ccd.psf.shape:
+            _l.log("Cube and CCD PSF shapes do not match.", level="WARNING")
+            _l.log("Padding to match PSF shape...", level="WARNING")
+            return 'pad'
+        return None
 
     def _compute_star_flux(
         self,
