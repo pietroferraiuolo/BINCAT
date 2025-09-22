@@ -508,12 +508,13 @@ class BinarySystem:
         ring = self._create_ring(radius=self.distance, shape=shape)
         num_positions = _np.sum(ring)
         estimated_memory_mb = (num_positions * shape[0] * shape[1] * 4) / (1024**2*1000)  # float32 is 4 bytes
-        _l.log(f"Estimated cube memory usage: {estimated_memory_mb:.2f} MB", level="INFO")
+        _l.log(f"Estimated cube memory usage: {estimated_memory_mb:.3f} GB", level="INFO")
         # Optional: check against available RAM (requires psutil)
         try:
             available_ram_mb = psutil.virtual_memory().available / (1024**2*1000)
             if estimated_memory_mb > available_ram_mb * 0.8:  # 80% threshold to prevent overflow
-                raise MemoryError(f"Estimated memory ({estimated_memory_mb:.2f} GB) exceeds 80% of available RAM ({available_ram_mb:.2f} GB). Reduce shape.")
+                _l.log("Estimated memory exceeds 80% of available RAM.", level="ERROR")
+                raise MemoryError(f"Estimated memory ({estimated_memory_mb:.3f} GB) exceeds 80% of available RAM ({available_ram_mb:.3f} GB). Reduce shape.")
         except ImportError:
             _l.log("psutil not available; skipping RAM check.", level="WARNING")
         _map[center] += star1

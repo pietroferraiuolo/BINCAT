@@ -153,7 +153,7 @@ class Logger():
         FORMAT = " [%(levelname)s] %(name)s - %(message)s"
         formato = _l.Formatter(fmt=FORMAT)
         handler = _lh.RotatingFileHandler(
-            filename="bincat.log",
+            filename="data/bincat.log",
             mode="a",
             maxBytes=10_000_000,
             backupCount=3,
