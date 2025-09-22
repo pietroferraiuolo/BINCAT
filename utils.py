@@ -6,7 +6,7 @@ from typing import Any as _Any
 
 
 def load_fits(
-    filepath: str, return_header: bool = False
+    filepath: str, return_header: bool = False, as_hdul: bool = False
 ):
     """
     Loads a FITS file.
@@ -26,10 +26,15 @@ def load_fits(
         The header of the loaded fits file.
     """
     with _fits.open(filepath) as hdul:
-        fit = hdul[0].data
-        if len(hdul) > 1 and hasattr(hdul[1], "data"):
-            mask = hdul[1].data.astype(bool)
-            fit = _masked_array(fit, mask=mask)
+        if as_hdul:
+            fit = hdul.copy()
+        elif len(hdul) == 1:
+            fit = hdul[0]
+        else:
+            fit = hdul[0].data
+            if len(hdul) > 1 and hasattr(hdul[1], "data"):
+                mask = hdul[1].data.astype(bool)
+                fit = _masked_array(fit, mask=mask)
         if return_header:
             header = hdul[0].header
             return fit, header

@@ -1,14 +1,13 @@
-import xupy as xp
+import gc, psutil, xupy as xp, poppy as _poppy
 _np = xp.np
-from xupy import typings as _xt
-import poppy as _poppy
-import astropy.units as _u
-from astropy import convolution as _c
-from utils import load_fits, save_fits, _Any, _fits, Logger
-from astropy.table import QTable as _qt
 import matplotlib.pyplot as _plt
-import multiprocessing as _mp
-import gc
+from xupy import typings as _xt
+from astropy.table import QTable as _qt
+from astropy import convolution as _c
+import astropy.units as _u
+from utils import (
+    load_fits, save_fits, _Any, _fits, Logger
+)
 _l = Logger()
 
 class GaiaTelescope:
@@ -94,11 +93,13 @@ class CCD:
         **kwargs: dict[str, _Any],
     ):
         """The constructor"""
-        if not psf is None:
+        if psf is not None:
             if isinstance(psf, _fits.HDUList):
                 self._psf = psf
+                self._meta = psf[0].header
             elif isinstance(psf, str):
                 self._psf = _fits.open(psf)
+                self._meta = self._psf[0].header
             else:
                 raise TypeError(
                     "`psf` must be an astropy.io.fits.HDUList or a string path to a FITS file."
@@ -109,6 +110,7 @@ class CCD:
             self._psf = self.psf = None
             self.psf_x = None
             self.psf_y = None
+            self._meta = None
             print(
                 """PSF not provided. Use the method 'compute_psf' to compute it, passing a
 `poppy` optical system."""
@@ -127,6 +129,13 @@ class CCD:
         self.tdi = kwargs.get("t_integration", 4.42 * _u.s)
         self.px_ratio = self.pxscale_y / self.pxscale_x
         self.rebinned = False
+    
+    @property
+    def header(self) -> _fits.Header | None:
+        """
+        Returns the header of the PSF FITS file if available.
+        """
+        return self._meta
 
     def rebin_psf(
         self,
@@ -213,17 +222,17 @@ class CCD:
         if mode == "2d":
             if not self.rebinned:
                 _poppy.display_psf(self._psf, title="CCD PSF", **kwargs)
+                return
             else:
-                _plt.figure()
+                fig = _plt.figure()
                 _plt.imshow(self.psf, **kwargs)
                 _plt.colorbar()
                 _plt.title("CCD PSF")
                 _plt.xlabel("X [px]")
                 _plt.ylabel("Y [px]")
                 _plt.show()
-            return
         else:
-            _plt.figure()
+            fig = _plt.figure()
             _plt.xlabel("arcsec")
             _plt.ylabel("Normalized PSF")
             _plt.grid(linestyle="--")
@@ -241,7 +250,7 @@ class CCD:
             else:
                 raise ValueError("Invalid mode. Use '2d', 'x', or 'y'.")
             _plt.show()
-            return
+        return fig
 
     def _computeXandYpsf(
         self, psf: _xt.Optional[_xt.ArrayLike] = None
@@ -484,7 +493,7 @@ class BinarySystem:
         """
         if any([s < self.distance for s in list(shape)]):
             raise ValueError(
-                f"Map shape must be larger than twice the distance of the binary system: {shape} < {self.distance*2}"
+            f"Map shape must be larger than twice the distance of the binary system: {shape} < {self.distance*2}"
             )
         center = (shape[0] // 2, shape[1] // 2)
         _map = _np.zeros(shape, dtype=_np.float32)
@@ -497,15 +506,22 @@ class BinarySystem:
             integration_time=t_integration,
         )
         ring = self._create_ring(radius=self.distance, shape=shape)
+        num_positions = _np.sum(ring)
+        estimated_memory_mb = (num_positions * shape[0] * shape[1] * 4) / (1024**2*1000)  # float32 is 4 bytes
+        _l.log(f"Estimated cube memory usage: {estimated_memory_mb:.2f} MB", level="INFO")
+        # Optional: check against available RAM (requires psutil)
+        try:
+            available_ram_mb = psutil.virtual_memory().available / (1024**2*1000)
+            if estimated_memory_mb > available_ram_mb * 0.8:  # 80% threshold to prevent overflow
+                raise MemoryError(f"Estimated memory ({estimated_memory_mb:.2f} GB) exceeds 80% of available RAM ({available_ram_mb:.2f} GB). Reduce shape.")
+        except ImportError:
+            _l.log("psutil not available; skipping RAM check.", level="WARNING")
         _map[center] += star1
         pos_cube = []
         x, y = _np.where(ring == 1)
         for x, y in zip(x, y):
             mapp = _np.copy(_map)
             mapp[x, y] += companion
-            # Add Poisson noise to the map
-            # noise = _np.random.poisson(_np.random.uniform(0.5, 5, 1), size=mapp.shape)
-            # mapp += noise
             pos_cube.append(mapp)
         pos_cube = _np.dstack(pos_cube)
         pos_cube = _np.rollaxis(pos_cube, -1)
@@ -700,7 +716,7 @@ class _Convolver():
         noisy = _np.random.poisson(convolved).astype(_np.float32)
         del convolved
         gc.collect()
-        fin_psf = ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3))[0]
+        fin_psf = self.ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3))[0]
         del noisy
         gc.collect()
         return fin_psf
