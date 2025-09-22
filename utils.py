@@ -1,13 +1,20 @@
-from astropy.io import fits as _fits
+import time as _time
+from astropy.io import fits
 from numpy.typing import ArrayLike as _Array
 from numpy.ma import MaskedArray as _masked_array
 from numpy import uint8 as _uint8
 from typing import Any as _Any
 
+__all__ = [
+    "load_fits",
+    "save_fits",
+    "get_kwargs",
+    "newtn",
+    "Logger",
+    "fits",
+]
 
-def load_fits(
-    filepath: str, return_header: bool = False, as_hdul: bool = False
-):
+def load_fits(filepath: str, return_header: bool = False, as_masked_array: bool = True):
     """
     Loads a FITS file.
 
@@ -25,16 +32,22 @@ def load_fits(
     header : dict | fits.Header, optional
         The header of the loaded fits file.
     """
-    with _fits.open(filepath) as hdul:
-        if as_hdul:
-            fit = hdul.copy()
-        elif len(hdul) == 1:
+    with fits.open(filepath) as hdul:
+        if len(hdul) == 1:
             fit = hdul[0]
-        else:
+        elif len(hdul) == 2 and as_masked_array:
             fit = hdul[0].data
             if len(hdul) > 1 and hasattr(hdul[1], "data"):
                 mask = hdul[1].data.astype(bool)
                 fit = _masked_array(fit, mask=mask)
+        elif len(hdul) >= 2:
+            fit = []
+            for hdu in hdul:
+                if hasattr(hdu, "data"):
+                    fit.append(hdu.data)
+                else:
+                    fit.append(None)
+            fit = tuple(fit)
         if return_header:
             header = hdul[0].header
             return fit, header
@@ -45,7 +58,7 @@ def save_fits(
     filepath: str,
     data: _Array,
     overwrite: bool = True,
-    header: dict[str,_Any] | _fits.Header = None,
+    header: dict[str, _Any] | fits.Header = None,
 ) -> None:
     """
     Saves a FITS file.
@@ -67,16 +80,14 @@ def save_fits(
         header = _header_from_dict(header)
     # Save the FITS file
     if isinstance(data, _masked_array):
-        _fits.writeto(filepath, data.data, header=header, overwrite=overwrite)
+        fits.writeto(filepath, data.data, header=header, overwrite=overwrite)
         if hasattr(data, "mask"):
-            _fits.append(filepath, data.mask.astype(_uint8))
+            fits.append(filepath, data.mask.astype(_uint8))
     else:
-        _fits.writeto(filepath, data, header=header, overwrite=overwrite)
+        fits.writeto(filepath, data, header=header, overwrite=overwrite)
 
 
-def _header_from_dict(
-    dictheader: dict[str,_Any | tuple[_Any,str]]
-) -> _fits.Header:
+def _header_from_dict(dictheader: dict[str, _Any | tuple[_Any, str]]) -> fits.Header:
     """
     Converts a dictionary to an astropy.io.fits.Header object.
 
@@ -92,9 +103,9 @@ def _header_from_dict(
     header : astropy.io.fits.Header
         The converted FITS header object.
     """
-    if isinstance(dictheader, _fits.Header):
+    if isinstance(dictheader, fits.Header):
         return dictheader
-    header = _fits.Header()
+    header = fits.Header()
     for key, value in dictheader.items():
         if isinstance(value, tuple) and len(value) > 2:
             raise ValueError(
@@ -106,6 +117,47 @@ def _header_from_dict(
             header[key] = value
     return header
 
+
+def get_kwargs(names: tuple[str], default: _Any, kwargs: dict[str, _Any]) -> _Any:
+    """
+    Gets a tuple of possible kwargs names for a variable and checks if it was
+    passed, and in case returns it.
+
+    Parameters
+    ----------
+    names : tuple
+        Tuple containing all the possible names of a variable which can be passed
+        as a **kwargs argument.
+    default : any type
+        The default value to assign the requested key if it doesn't exist.
+    kwargs : dict
+        The dictionary of variables passed as 'Other Parameters'.
+
+    Returns
+    -------
+    key : value of the key
+        The value of the searched key if it exists. If not, the default value will
+        be returned.
+    """
+    possible_keys = names
+    for key in possible_keys:
+        if key in kwargs:
+            return kwargs[key]
+    return default
+
+
+def newtn() -> str:
+    """
+    Returns a timestamp in a string of the format `YYYYMMDD_HHMMSS`.
+
+    Returns
+    -------
+    str
+        Current time in a string format.
+    """
+    return _time.strftime("%Y%m%d_%H%M%S")
+    
+
 #######################
 ## LOGGING UTILITIES ##
 #######################
@@ -113,16 +165,17 @@ def _header_from_dict(
 import logging as _l
 import logging.handlers as _lh
 
-class Logger():
-    
+
+class Logger:
+
     def __init__(self, level: int = _l.INFO) -> None:
         """The constructor"""
         self._l = self._set_up_logger(logging_level=level)
-        
+
     def _set_up_logger(self, logging_level: int = _l.INFO) -> _l.Logger:
         """
         Set up a rotating file logger.
-        
+
         This function configures a logger to write log messages to a file with
         rotation. The log file will be encoded in UTF-8 and will rotate when it
         reaches a specified size, keeping a specified number of backup files.
@@ -150,7 +203,7 @@ class Logger():
 
             set_up_logger('/path/to/logfile.log', logging.DEBUG)
         """
-        FORMAT = " [%(levelname)s] %(name)s - %(message)s"
+        FORMAT = "[%(levelname)s] %(name)s - %(message)s"
         formato = _l.Formatter(fmt=FORMAT)
         handler = _lh.RotatingFileHandler(
             filename="data/bincat.log",
@@ -167,7 +220,6 @@ class Logger():
         root_logger.addHandler(handler)
         handler.doRollover()
         return root_logger
-
 
     def log(self, message: str, level: str = "INFO") -> None:
         """

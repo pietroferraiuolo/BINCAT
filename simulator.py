@@ -1,14 +1,15 @@
-import gc, psutil, xupy as xp, poppy as _poppy
+import os, gc, xupy as xp, poppy as _poppy
 _np = xp.np
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
 from astropy.table import QTable as _qt
 from astropy import convolution as _c
 import astropy.units as _u
-from utils import (
-    load_fits, save_fits, _Any, _fits, Logger
-)
+from utils import *
+from utils import _header_from_dict as hfd
+
 _l = Logger()
+basepath = os.path.dirname(os.path.abspath(__file__))
 
 class GaiaTelescope:
     """
@@ -47,7 +48,7 @@ class GaiaTelescope:
         The integration time per CCD in seconds. Default is 4.42 seconds.
     """
 
-    def __init__(self, **kwargs: dict[str,_Any]):
+    def __init__(self, **kwargs: dict[str, _xt.Any]):
         """The constructor"""
         self.speed = 59.9641857803 * _u.arcsec / _u.s
         self.period = (6 * _u.hour).to(_u.s)
@@ -89,16 +90,16 @@ class CCD:
 
     def __init__(
         self,
-        psf: _xt.Optional[_fits.HDUList | _xt.ArrayLike | str] = None,
-        **kwargs: dict[str, _Any],
+        psf: _xt.Optional[fits.HDUList | _xt.ArrayLike | str] = None,
+        **kwargs: dict[str, _xt.Any],
     ):
         """The constructor"""
         if psf is not None:
-            if isinstance(psf, _fits.HDUList):
+            if isinstance(psf, fits.HDUList):
                 self._psf = psf
                 self._meta = psf[0].header
             elif isinstance(psf, str):
-                self._psf = _fits.open(psf)
+                self._psf = fits.open(psf)
                 self._meta = self._psf[0].header
             else:
                 raise TypeError(
@@ -129,9 +130,15 @@ class CCD:
         self.tdi = kwargs.get("t_integration", 4.42 * _u.s)
         self.px_ratio = self.pxscale_y / self.pxscale_x
         self.rebinned = False
-    
+        self.WC = {
+            0: (18, 12),
+            1: (18, 1),
+            2: (12, 1),
+        }
+        self._wc_conditions = ["G<13", "13<=G<16", "16<=G"]
+
     @property
-    def header(self) -> _fits.Header | None:
+    def header(self) -> fits.Header | None:
         """
         Returns the header of the PSF FITS file if available.
         """
@@ -139,7 +146,7 @@ class CCD:
 
     def rebin_psf(
         self,
-        psf: _xt.Optional[_fits.HDUList | _xt.ArrayLike] = None,
+        psf: _xt.Optional[fits.HDUList | _xt.ArrayLike] = None,
         *,
         rebin_factor: int = 2,
         axis_ratio: tuple[int, int] = (1, 1),
@@ -177,35 +184,8 @@ class CCD:
             psfx_out, psfy_out = self._computeXandYpsf(psf=psf_out)
             return psf_out, psfx_out, psfy_out
 
-    def compute_psf(self, osys: _poppy.OpticalSystem, overwrite: bool = False) -> None:
-        """
-        Compute the PSF of the Gaia telescope using a given optical system.
 
-        Parameters
-        ----------
-        osys : poppy.OpticalSystem
-            The optical system to use for the PSF computation.
-        overwrite : bool, optional
-            Whether to overwrite the existing PSF if it exists. Default is False.
-        """
-        if not isinstance(osys, _poppy.OpticalSystem):
-            raise TypeError("osys must be an instance of poppy.OpticalSystem")
-        if self._psf is not None:
-            print("PSF already computed.")
-            if not overwrite:
-                print("Use overwrite=True to recompute the PSF.")
-                return
-        print("Overwriting existing PSF.")
-        wvls = self._passbands["lambda"]
-        weights = self._passbands["G"].filled(0)
-        self._psf = osys.calc_psf(
-            progressbar=True, source={"wavelengths": wvls, "weights": weights}
-        )[0].data
-        self.psf = self._psf[0].data
-        self._computeXandYpsf()
-        return "Computation complete."
-
-    def display_psf(self, mode: str = "2d", **kwargs: dict[str, _Any]) -> None:
+    def display_psf(self, mode: str = "2d", **kwargs: dict[str, _xt.Any]) -> None:
         """Display the PSF of the Gaia telescope.
 
         Parameters
@@ -221,11 +201,24 @@ class CCD:
             raise ValueError("PSF has not been computed yet.")
         if mode == "2d":
             if not self.rebinned:
-                _poppy.display_psf(self._psf, title="CCD PSF", **kwargs)
+                _poppy.display_psf(self._psf, title="CCD PSF", normalize='peak', **kwargs)
                 return
             else:
+                cmap = kwargs.pop("cmap", "gist_heat")
+                from astropy.visualization import (
+                    ImageNormalize,
+                    MinMaxInterval,
+                    LogStretch,
+                )
+
+                norm = ImageNormalize(
+                    vmin=xp.np.nanmin(self.psf),
+                    vmax=xp.np.nanmax(self.psf),
+                    stretch=LogStretch(500),
+                    interval=MinMaxInterval(),
+                )
                 fig = _plt.figure()
-                _plt.imshow(self.psf, **kwargs)
+                _plt.imshow(self.psf, cmap=cmap, norm=norm, **kwargs)
                 _plt.colorbar()
                 _plt.title("CCD PSF")
                 _plt.xlabel("X [px]")
@@ -323,7 +316,7 @@ Integration time: {self.tdi}
 class BinarySystem:
     """
     Class to simulate a binary star system.
-    
+
     Parameters
     ----------
     M1 : float
@@ -340,14 +333,14 @@ class BinarySystem:
         - Gaia_BP
         - Gaia_RP
         Default is 'Gaia_G'.
-        
+
     Attributes
     ----------
     map : numpy.ndarray
         The cube of images of the binary star system.
     is_observed : bool
         Indicates whether the system has been observed with a CCD.
-        
+
     Methods
     -------
     create_raw_binary_cube(collecting_area, t_integration, shape=(512, 512), out=False)
@@ -357,196 +350,166 @@ class BinarySystem:
     show_system(**kwargs)
         Plots the fits image of the binary system's cube.
     writeto(filepath)
-        Write the cube of images to a FITS file.    
-    
+        Write the cube of images to a FITS file.
+
     """
-    
+
     def __init__(
-        self, M1: float, M2: float, distance: float, **kwargs: dict[str, _Any]
+        self,
+        *,
+        M1: float,
+        M2: float,
+        distance: float,
+        shape: tuple[int, int] = (512, 512),
+        **kwargs: dict[str, _xt.Any],
     ):
         """The constructor"""
-        self.M1 = M1
-        self.M2 = M2
         if not isinstance(distance, _u.Quantity):
             self.distance = distance * _u.mas  # assuming input is in mas
         else:
             if distance.unit != _u.mas:
                 self.distance = distance.to(_u.mas)
         self.distance = int(self.distance.value)  # mas
-        self.map_shape = kwargs.get("shape", (250, 250))
+        if any([s < 2 * self.distance for s in list(shape)]):
+            raise ValueError(
+                f"Map shape must be larger than twice the distance of the binary system: {shape} < {2*self.distance*2}"
+            )
+        self.M2 = M2
+        self.M1 = M1
+        self.map_shape = shape
         self.is_observed = False
         self._bands = _qt.read("data/bands.fits")
         self._bands = self._bands[self._bands["band"] == kwargs.get("band", "Gaia_G")]
-
-    @property
-    def map(self) -> _np.ndarray[float, _Any]:
-        """
-        Returns the cube of images of the binary star system.
-        """
-        if not hasattr(self, "_cube"):
-            raise AttributeError(
-                "Cube has not been created yet. Use 'create_raw_binary_cube' method."
-            )
-        return self._cube
+        # For now hardcoded, but should be passed as parameters (or read from CCD)
+        self.collecting_area = (18 * 10 * _u.um) * (
+            12 * 30 * _u.um
+        )  # Gaia CCD pixel window area (G<13)
+        self.t_int = 4.42 * _u.s  # Gaia CCD integration time
+        self.comp_star_flux = self._compute_star_flux(
+            self.M2, collecting_area=self.collecting_area, integration_time=self.t_int
+        )
+        self.central_star_flux = self._compute_star_flux(
+            self.M1, collecting_area=self.collecting_area, integration_time=self.t_int
+        )
+        self._base_map = self._create_base_map()
 
     def observe(self, ccd: CCD):
         """
         Observe the sky map with the given CCD:
-        
+
         Given the CCD (with its psf):
         - convolves each image in the cube with the CCD's PSF
         - applies the photon noise afterwards
         - repeats the process shifting the image by an increasing amount of pixels in x and y
         - creates a new cube for configuration (angle) and saves it
-        
+
         Parameters
         ----------
         ccd : CCD
             The CCD to use for the observation.
         """
-        check = self._check_everything_is_fine(ccd)
-        convolved_cube = []
-        _l.log("Starting convolution computation on cube...", level="INFO")
+        tn = newtn()
+        N = self._create_ring(radius=self.distance, shape=self.map_shape).sum()
+        datapath = os.path.join(basepath, "data", "simulations", "observations", f"{tn}")
+        if not os.path.exists(datapath):
+            os.makedirs(datapath, exist_ok=True)
+        _l.log("Starting convolution computation on binary system...", level="INFO")
+        _l.log(f"Data Tracking Number : {tn}", level="INFO")
         from tqdm import tqdm
 
-        for img in tqdm(self._cube, desc="Observing", unit="config"):
-            if check == 'pad':
-                xdiff = ccd.psf.shape[1] - img.shape[1]
-                ydiff = ccd.psf.shape[0] - img.shape[0]
-                img = _np.pad(img, ((ydiff//2, ydiff//2), (xdiff//2, xdiff//2)), mode='constant')
-            convolved = _c.convolve_fft(img, ccd.psf, boundary='wrap', normalize_kernel=False, allow_huge=True)
-            # Add Poisson noise to the convolved image
-            noisy = _np.random.poisson(convolved).astype(_np.float32)
+        i=0
+        header = hfd(ccd.header)
+        assert ccd.psf.shape == self._base_map.shape, "PSF and map shapes do not match."
+        for img in tqdm(self.transit(), desc=f'[{tn}] Observing...', unit='images', total=N):
+            convolved = _c.convolve_fft(
+                img, ccd.psf, boundary="wrap", normalize_kernel=True, allow_huge=True
+            )
+            # Add Poisson noise and Readout Noise to the convolved image
+            # noisy = _np.random.poisson(convolved).astype(_np.float32)
+            # noisy += _np.random.normal(0, 5, size=noisy.shape)  # readout noise
+            # del convolved
+            # gc.collect()
+            final = ccd.rebin_psf(convolved, rebin_factor=1, axis_ratio=(3,1))
             del convolved
             gc.collect()
-            convolved_cube.append(ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3))[0])
-            del noisy
-            gc.collect()
+            hdul = fits.HDUList()
+            hdul.append(fits.PrimaryHDU(final[0], header=header))
+            hdul.append(fits.ImageHDU(final[1], name="PSFX"))
+            hdul.append(fits.ImageHDU(final[2], name="PSFY"))
+            hdul.writeto(os.path.join(datapath, f"{i:04d}.fits"), overwrite=True)
+            i += 1
 
         _l.log("Convolution complete.", level="INFO")
-        outcube = _np.dstack(convolved_cube)
-        outcube = _np.rollaxis(outcube, -1)
         self.is_observed = True
-        return outcube
+        return tn
 
-    def show_system(self, **kwargs: dict[str, _Any]) -> None:
+    def show_system(self, **kwargs: dict[str, _xt.Any]) -> None:
         """
         Plots the fits image of the binary system's cube (A random image of the cube).
-        
+
         Parameters
         ----------
         **kwargs : dict, optional
             Additional keyword arguments to pass to the imshow function.
         """
-        n = _np.random.randint(0, self._cube.shape[0]-1)
+        c=0
+        for i in self.transit():
+            map = i.copy()
+            c+=1
+            if c==1:
+                break
+        xlim = kwargs.pop("xlim", None)
+        ylim = kwargs.pop("ylim", None)
         _plt.figure()
-        _plt.imshow(self._cube[n], **kwargs)
+        _plt.imshow(map, **kwargs)
         _plt.colorbar()
         _plt.title(f"Binary sample: {self.M1} mag + {self.M2} mag, {self.distance} mas")
         _plt.xlabel("X [mas]")
         _plt.ylabel("Y [mas]")
+        if xlim is not None:
+            _plt.xlim(xlim)
+        if ylim is not None:
+            _plt.ylim(ylim)
         _plt.show()
 
-    def writeto(self, filepath: str) -> None:
+    def transit(self):
         """
-        Write the cube of images to a FITS file.
-
-        Parameters
-        ----------
-        filepath : str
-            The path to the output FITS file.
-        """
-        if not hasattr(self, "_cube"):
-            raise AttributeError(
-                "Cube has not been created yet. Use 'create_raw_binary_cube' method."
-            )
-        hdu = _fits.PrimaryHDU(self._cube)
-        hdu.writeto(filepath, overwrite=True)
-        print(f"Cube written to {filepath}")
-
-    def create_raw_binary_cube(
-        self,
-        collecting_area: float | _u.Quantity,
-        t_integration: float | _u.Quantity,
-        shape: tuple[int, int] = (512, 512),
-        out: bool = False,
-    ) -> _np.ndarray[float, _Any]:
-        """
-        Create a cube of images of a binary star system, in which each image corresponds
+        Create a generator of images of a binary star system, in which each image corresponds
         to a different angular position of one star with respect to the other.
 
-        Parameters
-        ----------
-        collecting_area : float or u.Quantity
-            Collecting area of the telescope in m².
-        t_integration : float or u.Quantity
-            Integration time in seconds. Default is 1 second.
-        shape : tuple of int, optional
-            Shape of the sky map (height, width). Default is (220,220).
-        out : bool, optional
-            If True, saves the cube as a FITS file. Default is False.
-
-        Returns
+        Yields
         -------
         numpy.ndarray
-            The binary cube with the star at the center.
+            Each binary map with the star at the center for a different position.
         """
-        if any([s < self.distance for s in list(shape)]):
-            raise ValueError(
-            f"Map shape must be larger than twice the distance of the binary system: {shape} < {self.distance*2}"
-            )
-        center = (shape[0] // 2, shape[1] // 2)
-        _map = _np.zeros(shape, dtype=_np.float32)
-        star1 = self._compute_star_flux(
-            self.M1, collecting_area=collecting_area, integration_time=t_integration
-        )
-        companion = self._compute_star_flux(
-            self.M2,
-            collecting_area=collecting_area,
-            integration_time=t_integration,
-        )
-        ring = self._create_ring(radius=self.distance, shape=shape)
-        num_positions = _np.sum(ring)
-        estimated_memory_mb = (num_positions * shape[0] * shape[1] * 4) / (1024**2*1000)  # float32 is 4 bytes
-        _l.log(f"Estimated cube memory usage: {estimated_memory_mb:.3f} GB", level="INFO")
-        # Optional: check against available RAM (requires psutil)
-        try:
-            available_ram_mb = psutil.virtual_memory().available / (1024**2*1000)
-            if estimated_memory_mb > available_ram_mb * 0.8:  # 80% threshold to prevent overflow
-                _l.log("Estimated memory exceeds 80% of available RAM.", level="ERROR")
-                raise MemoryError(f"Estimated memory ({estimated_memory_mb:.3f} GB) exceeds 80% of available RAM ({available_ram_mb:.3f} GB). Reduce shape.")
-        except ImportError:
-            _l.log("psutil not available; skipping RAM check.", level="WARNING")
-        _map[center] += star1
-        pos_cube = []
+        for coord in self.coordinates():
+            mmap = self._base_map.copy()
+            mmap[coord[0], coord[1]] += self.comp_star_flux
+            yield mmap
+
+    def coordinates(self):
+        """
+        Get the coordinates of the secondary star in the binary system.
+
+        Yields
+        -------
+        tuple of int
+            (x, y) coordinates of the secondary star in pixels, one at a time.
+        """
+        ring = self._create_ring(radius=self.distance, shape=self.map_shape)
         x, y = _np.where(ring == 1)
-        for x, y in zip(x, y):
-            mapp = _np.copy(_map)
-            mapp[x, y] += companion
-            pos_cube.append(mapp)
-        pos_cube = _np.dstack(pos_cube)
-        pos_cube = _np.rollaxis(pos_cube, -1)
-        self._cube = pos_cube
-        if out:
-            return pos_cube
-        
-    def _check_everything_is_fine(self, ccd: CCD) -> None:
+        for i, j in zip(x, y):
+            yield (i, j)
+
+    def _create_base_map(self):
         """
-        Check if everything is fine before observing the binary system with the CCD.
+        Create the base map with the primary star at the center and the secondary star
+        at a distance of `self.distance` in a random direction.
         """
-        if not hasattr(self, "_cube"):
-            _l.log("Cube has not been created yet. Use 'create_raw_binary_cube' method.", level="ERROR")
-            raise AttributeError(
-                "Cube has not been created yet. Use 'create_raw_binary_cube' method."
-            )
-        if ccd.psf is None:
-            _l.log("CCD PSF has not been computed yet.", level="ERROR")
-            raise ValueError("CCD PSF has not been computed yet.")
-        if not self._cube.shape[1:] == ccd.psf.shape:
-            _l.log("Cube and CCD PSF shapes do not match.", level="WARNING")
-            _l.log("Padding to match PSF shape...", level="WARNING")
-            return 'pad'
-        return None
+        center = (self.map_shape[0] // 2, self.map_shape[1] // 2)
+        _map = _np.zeros(self.map_shape, dtype=_np.float64)
+        _map[center] += self.central_star_flux
+        return _map
 
     def _compute_star_flux(
         self,
@@ -614,7 +577,7 @@ class BinarySystem:
 
     def _create_ring(
         self, radius: int, shape: tuple[int, int], show: bool = False
-    ) -> _np.ndarray[int, _Any]:
+    ) -> _np.ndarray[int, _xt.Any]:
         """
         Create a ring mask for the sky map.
 
@@ -646,7 +609,7 @@ class BinarySystem:
             _plt.title(f"Ring mask with radius {radius} mas")
             _plt.show()
         return ring_mask
-    
+
     def __repr__(self):
         """String representation of the Binary System."""
         return f"""         Binary System
@@ -661,36 +624,8 @@ class BinarySystem:
 """
 
 
-def _get_kwargs(names: tuple[str], default: _Any, kwargs: dict[str, _Any]) -> _Any:
-    """
-    Gets a tuple of possible kwargs names for a variable and checks if it was
-    passed, and in case returns it.
+class _Convolver:
 
-    Parameters
-    ----------
-    names : tuple
-        Tuple containing all the possible names of a variable which can be passed
-        as a **kwargs argument.
-    default : any type
-        The default value to assign the requested key if it doesn't exist.
-    kwargs : dict
-        The dictionary of variables passed as 'Other Parameters'.
-
-    Returns
-    -------
-    key : value of the key
-        The value of the searched key if it exists. If not, the default value will
-        be returned.
-    """
-    possible_keys = names
-    for key in possible_keys:
-        if key in kwargs:
-            return kwargs[key]
-    return default
-
-
-class _Convolver():
-    
     def __init__(self, ccd: CCD = None):
         self.psf = ccd.psf
         self.ccd = ccd
@@ -698,7 +633,7 @@ class _Convolver():
     def convolve(self, img):
         """
         Convolve the input image with the PSF.
-    
+
         Parameters
         ----------
         img : numpy.ndarray
@@ -711,8 +646,12 @@ class _Convolver():
         """
         xdiff = self.psf.shape[1] - img.shape[1]
         ydiff = self.psf.shape[0] - img.shape[0]
-        img = _np.pad(img, ((ydiff//2, ydiff//2), (xdiff//2, xdiff//2)), mode='constant')
-        convolved = _c.convolve_fft(img, self.psf, boundary='wrap', normalize_kernel=False, allow_huge=True)
+        img = _np.pad(
+            img, ((ydiff // 2, ydiff // 2), (xdiff // 2, xdiff // 2)), mode="constant"
+        )
+        convolved = _c.convolve_fft(
+            img, self.psf, boundary="wrap", normalize_kernel=False, allow_huge=True
+        )
         # Add Poisson noise to the convolved image
         noisy = _np.random.poisson(convolved).astype(_np.float32)
         del convolved
