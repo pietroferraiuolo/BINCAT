@@ -531,9 +531,9 @@ class BinarySystem:
             _plt.xlim(xlim)
         if ylim is not None:
             _plt.ylim(ylim)
-        _plt.show()
         if out:
             return map
+        _plt.show()
 
     def transit(self):
         """
