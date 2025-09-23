@@ -1,4 +1,5 @@
 import os, gc, xupy as xp, poppy as _poppy
+
 _np = xp.np
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
@@ -10,6 +11,7 @@ from utils import _header_from_dict as hfd
 
 _l = Logger()
 basepath = os.path.dirname(os.path.abspath(__file__))
+
 
 class GaiaTelescope:
     """
@@ -121,19 +123,23 @@ class CCD:
         self._passbands = _qt.read("data/gaiaDR3passband.fits")
         self.pixel_area = kwargs.get("pixel_area", 10 * 30 * _u.um**2)
         self.ccd_pixels = kwargs.get("ccd_pixels", [4500 * _u.pixel, 1966 * _u.pixel])
-        self.pxscale_x = kwargs.get("pixel_scale_x", 0.059 * _u.arcsec / _u.pixel)
-        self.pxscale_y = kwargs.get("pixel_scale_y", 0.059 * 3 * _u.arcsec / _u.pixel)
-        self.fov = [
-            self.ccd_pixels[0] * self.pxscale_x,
-            self.ccd_pixels[1] * self.pxscale_y,
-        ]
+        self.pxscale_x = kwargs.get("pixel_scale_x", None)
+        self.pxscale_y = kwargs.get("pixel_scale_y", None)
         self.tdi = kwargs.get("t_integration", 4.42 * _u.s)
-        self.px_ratio = self.pxscale_y / self.pxscale_x
         self.rebinned = False
         self.WC = {
-            0: (18, 12),
-            1: (18, 1),
-            2: (12, 1),
+            0: {
+                "area_px": (18, 12),
+                "area_um": 18 * 12 * 300 * _u.um**2,
+            },
+            1: {
+                "area_px": (18, 1),
+                "area_um": 18 * 300 * _u.um**2,
+            },
+            2: {
+                "area_px": (12, 1),
+                "area_um": 12 * 300 * _u.um**2,
+            },
         }
         self._wc_conditions = ["G<13", "13<=G<16", "16<=G"]
 
@@ -184,8 +190,12 @@ class CCD:
             psfx_out, psfy_out = self._computeXandYpsf(psf=psf_out)
             return psf_out, psfx_out, psfy_out
 
-
-    def display_psf(self, mode: str = "2d", **kwargs: dict[str, _xt.Any]) -> None:
+    def display_psf(
+        self,
+        psf: _xt.Optional[_xt.ArrayLike] = None,
+        mode: str = "2d",
+        **kwargs: dict[str, _xt.Any],
+    ) -> None:
         """Display the PSF of the Gaia telescope.
 
         Parameters
@@ -195,13 +205,66 @@ class CCD:
             relative axes PSFs.
             Default is '2d'.
         **kwargs : dict, optional
-            Additional keyword arguments to pass to the display function.
+            Additional keyword arguments to pass to the display function (`plt.imshow`).
         """
+        if psf is not None:
+            try:
+                if isinstance(psf, (list, tuple)) and len(psf) == 3:
+                    psf_x = psf[1]
+                    psf_y = psf[2]
+                    psf = psf[0]
+                else:
+                    psf_x, psf_y = self._computeXandYpsf(psf=psf[0])
+                    if (
+                        psf_x.shape[0] != psf.shape[0]
+                        and psf_y.shape[0] != psf.shape[1]
+                    ):
+                        raise ValueError("Something's wrong with the passed PSF")
+            except Exception as e:
+                _l.log(e, level="ERROR")
+                raise (e)
+
+            fig = _plt.figure(figsize=(8, 4))
+
+            # Left: imshow (spans full height, 1/3 width)
+            cmap = kwargs.pop("cmap", "gist_heat")
+            aspect = kwargs.pop("aspect", "auto")
+            ax1 = _plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=1)
+            ax1.imshow(psf, cmap=cmap, aspect=aspect)
+            ax1.axis("off")  # to hide axes
+
+            # Right top: first plot (top half of right, 2/3 width)
+            ax2 = _plt.subplot2grid((2, 3), (0, 1), rowspan=1, colspan=2)
+            ax2.plot(psf_x, linewidth=2, color="tab:red")
+            ax2.yaxis.set_label_position("right")
+            ax2.yaxis.set_ticks_position("right")
+            ax2.xaxis.set_ticklabels([])
+            ax2.grid(True, linestyle="--", alpha=0.85)
+
+            # Right bottom: second plot (bottom half of right, 2/3 width)
+            ax3 = _plt.subplot2grid((2, 3), (1, 1), rowspan=1, colspan=2)
+            ax3.plot(psf_y, linewidth=2, color="tab:red")
+            ax3.xaxis.set_ticklabels([])
+            ax3.yaxis.set_label_position("right")
+            ax3.yaxis.set_ticks_position("right")
+            ax3.grid(True, linestyle="--", alpha=0.85)
+
+            fig.suptitle(
+                "2D PSF (left) and 1D Profiles (right): X (up) and Y (down)",
+                fontsize=14,
+                weight="semibold",
+            )
+            _plt.tight_layout()
+            _plt.show()
+
+            return fig
         if self._psf is None:
             raise ValueError("PSF has not been computed yet.")
         if mode == "2d":
             if not self.rebinned:
-                _poppy.display_psf(self._psf, title="CCD PSF", normalize='peak', **kwargs)
+                _poppy.display_psf(
+                    self._psf, title="CCD PSF", normalize="peak", **kwargs
+                )
                 return
             else:
                 cmap = kwargs.pop("cmap", "gist_heat")
@@ -319,20 +382,14 @@ class BinarySystem:
 
     Parameters
     ----------
+    ccd : CCD
+        The CCD to use for the observation.
     M1 : float
         Magnitude of the primary star.
     M2 : float
         Magnitude of the secondary star.
     distance : float or astropy.units.Quantity
         Angular separation between the two stars in milliarcseconds (mas).
-    shape : tuple of int, optional
-        Shape of the sky map (height, width). Default is (250, 250).
-    band : str, optional
-        The band for which the CCD is initialized. Options are:
-        - Gaia_G
-        - Gaia_BP
-        - Gaia_RP
-        Default is 'Gaia_G'.
 
     Attributes
     ----------
@@ -357,29 +414,29 @@ class BinarySystem:
     def __init__(
         self,
         *,
+        ccd: CCD,
         M1: float,
         M2: float,
         distance: float,
-        shape: tuple[int, int] = (512, 512),
         **kwargs: dict[str, _xt.Any],
     ):
         """The constructor"""
+        self.ccd = ccd
+        self.map_shape = self.ccd.psf.shape
         if not isinstance(distance, _u.Quantity):
             self.distance = distance * _u.mas  # assuming input is in mas
         else:
             if distance.unit != _u.mas:
                 self.distance = distance.to(_u.mas)
         self.distance = int(self.distance.value)  # mas
-        if any([s < 2 * self.distance for s in list(shape)]):
+        if any([s < 2 * self.distance for s in list(self.map_shape)]):
             raise ValueError(
-                f"Map shape must be larger than twice the distance of the binary system: {shape} < {2*self.distance*2}"
+                f"Map shape must be larger than twice the distance of the binary system: {self.map_shape} < {2*self.distance*2}"
             )
         self.M2 = M2
         self.M1 = M1
-        self.map_shape = shape
         self.is_observed = False
-        self._bands = _qt.read("data/bands.fits")
-        self._bands = self._bands[self._bands["band"] == kwargs.get("band", "Gaia_G")]
+        self._bands = self.ccd._bands
         # For now hardcoded, but should be passed as parameters (or read from CCD)
         self.collecting_area = (18 * 10 * _u.um) * (
             12 * 30 * _u.um
@@ -410,17 +467,21 @@ class BinarySystem:
         """
         tn = newtn()
         N = self._create_ring(radius=self.distance, shape=self.map_shape).sum()
-        datapath = os.path.join(basepath, "data", "simulations", "observations", f"{tn}")
+        datapath = os.path.join(
+            basepath, "data", "simulations", "observations", f"{tn}"
+        )
         if not os.path.exists(datapath):
             os.makedirs(datapath, exist_ok=True)
         _l.log("Starting convolution computation on binary system...", level="INFO")
         _l.log(f"Data Tracking Number : {tn}", level="INFO")
         from tqdm import tqdm
 
-        i=0
+        i = 0
         header = hfd(ccd.header)
         assert ccd.psf.shape == self._base_map.shape, "PSF and map shapes do not match."
-        for img in tqdm(self.transit(), desc=f'[{tn}] Observing...', unit='images', total=N):
+        for img in tqdm(
+            self.transit(), desc=f"[{tn}] Observing...", unit="images", total=N
+        ):
             convolved = _c.convolve_fft(
                 img, ccd.psf, boundary="wrap", normalize_kernel=True, allow_huge=True
             )
@@ -429,7 +490,7 @@ class BinarySystem:
             # noisy += _np.random.normal(0, 5, size=noisy.shape)  # readout noise
             # del convolved
             # gc.collect()
-            final = ccd.rebin_psf(convolved, rebin_factor=1, axis_ratio=(3,1))
+            final = ccd.rebin_psf(convolved, rebin_factor=1, axis_ratio=(3, 1))
             del convolved
             gc.collect()
             hdul = fits.HDUList()
@@ -443,7 +504,7 @@ class BinarySystem:
         self.is_observed = True
         return tn
 
-    def show_system(self, **kwargs: dict[str, _xt.Any]) -> None:
+    def show_system(self, out: bool = False, **kwargs: dict[str, _xt.Any]) -> None:
         """
         Plots the fits image of the binary system's cube (A random image of the cube).
 
@@ -452,11 +513,11 @@ class BinarySystem:
         **kwargs : dict, optional
             Additional keyword arguments to pass to the imshow function.
         """
-        c=0
+        c = 0
         for i in self.transit():
             map = i.copy()
-            c+=1
-            if c==1:
+            c += 1
+            if c == 1:
                 break
         xlim = kwargs.pop("xlim", None)
         ylim = kwargs.pop("ylim", None)
@@ -471,6 +532,8 @@ class BinarySystem:
         if ylim is not None:
             _plt.ylim(ylim)
         _plt.show()
+        if out:
+            return map
 
     def transit(self):
         """
