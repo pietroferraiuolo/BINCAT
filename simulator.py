@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import os, gc, xupy as xp, poppy as _poppy
 
 _np = xp.np
@@ -490,7 +491,7 @@ class BinarySystem:
             # noisy += _np.random.normal(0, 5, size=noisy.shape)  # readout noise
             # del convolved
             # gc.collect()
-            final = ccd.rebin_psf(convolved, rebin_factor=1, axis_ratio=(3, 1))
+            final = ccd.rebin_psf(convolved, rebin_factor=59, axis_ratio=(1,3))
             del convolved
             gc.collect()
             hdul = fits.HDUList()
@@ -687,39 +688,16 @@ class BinarySystem:
 """
 
 
-class _Convolver:
+import dataclasses
+@dataclass(init=True, frozen=True, repr=True)
+class _PSFData():
 
-    def __init__(self, ccd: CCD = None):
-        self.psf = ccd.psf
-        self.ccd = ccd
-
-    def convolve(self, img):
-        """
-        Convolve the input image with the PSF.
-
-        Parameters
-        ----------
-        img : numpy.ndarray
-            The input image to convolve.
-
-        Returns
-        -------
-        numpy.ndarray
-            The convolved image.
-        """
-        xdiff = self.psf.shape[1] - img.shape[1]
-        ydiff = self.psf.shape[0] - img.shape[0]
-        img = _np.pad(
-            img, ((ydiff // 2, ydiff // 2), (xdiff // 2, xdiff // 2)), mode="constant"
-        )
-        convolved = _c.convolve_fft(
-            img, self.psf, boundary="wrap", normalize_kernel=False, allow_huge=True
-        )
-        # Add Poisson noise to the convolved image
-        noisy = _np.random.poisson(convolved).astype(_np.float32)
-        del convolved
-        gc.collect()
-        fin_psf = self.ccd.rebin_psf(noisy, rebin_factor=59, axis_ratio=(1, 3))[0]
-        del noisy
-        gc.collect()
-        return fin_psf
+    def __init__(self, psf: list[_xt.Array]):
+        self.psf = psf
+        self.psf_x = None
+        self.psf_y = None
+        self.meta = None
+        self.shape = None
+    
+    def __repr__(self):
+        return f"PSFData(shape={self.shape}, meta={self.meta})"
