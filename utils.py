@@ -14,6 +14,11 @@ __all__ = [
     "fits",
 ]
 
+##############
+## OS UTILS ##
+##############
+
+
 def load_fits(filepath: str, return_header: bool = False, as_masked_array: bool = True):
     """
     Loads a FITS file.
@@ -279,3 +284,68 @@ class Logger:
         else:
             self._l.debug(message)
             self._l.warning(f"Invalid log level '{level}'. Defaulting to 'DEBUG'.")
+
+
+#################
+## CLASS UTILS ##
+#################
+
+import dataclasses as _dc
+
+@_dc.dataclass(init=True, frozen=True, repr=True)
+class PSFData:
+    psf: list[_Array]|fits.HDUList|str
+
+    def __post_init__(self):
+        if isinstance(self.psf, list):
+            object.__setattr__(self, '_psf_2d', self.psf[0])
+            object.__setattr__(self, '_psf_x', self.psf[1])
+            object.__setattr__(self, '_psf_y', self.psf[2])
+            object.__setattr__(self, '_psf_hr', self.psf[3])
+            object.__setattr__(self, '_meta', None)
+            object.__setattr__(self, '_shape', self._psf_2d.shape)
+        elif isinstance(self.psf, fits.HDUList):
+            object.__setattr__(self, '_psf_2d', self.psf[0].data)
+            object.__setattr__(self, '_psf_x', self.psf[1].data)
+            object.__setattr__(self, '_psf_y', self.psf[2].data)
+            object.__setattr__(self, '_psf_hr', self.psf[3].data)
+            object.__setattr__(self, '_meta', self.psf[0].header)
+            object.__setattr__(self, '_shape', self._psf_2d.shape)
+        elif isinstance(self.psf, str):
+            with fits.open(self.psf) as hdul:
+                object.__setattr__(self, '_psf_2d', hdul[0].data)
+                object.__setattr__(self, '_psf_x', hdul[1].data)
+                object.__setattr__(self, '_psf_y', hdul[2].data)
+                object.__setattr__(self, '_psf_hr', hdul[3].data)
+                object.__setattr__(self, 
+                                   '_meta', 
+                                   {0: hdul[0].header, 1: hdul[1].header, 2: hdul[2].header, 3: hdul[3].header})
+                object.__setattr__(self, '_shape', self._psf_2d.shape)
+        else:
+            raise TypeError("PSF must be a list, fits.HDUList, or a fits file path string.")
+
+    @property
+    def psf_2d(self) -> _Array:
+        return self._psf_2d
+
+    @property
+    def psf_x(self) -> _Array:
+        return self._psf_x
+
+    @property
+    def psf_y(self) -> _Array:
+        return self._psf_y
+
+    @property
+    def meta(self) -> dict[str, _Any]:
+        if self._meta is None:
+            raise TypeError("For header to be returned PSF must be a fits.HDUList or a fits file path string.")
+        return self._meta
+
+    @property
+    def shape(self):
+        return self._shape
+
+    @property
+    def psf_hr(self):
+        return self._psf_hr

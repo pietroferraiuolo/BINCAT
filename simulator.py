@@ -155,7 +155,7 @@ class BinarySystem:
             hdul.append(fits.PrimaryHDU(final[0], header=h1))
             hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
             hdul.append(fits.ImageHDU(final[2], name="PSF_Y"))
-            hdul.append(fits.ImageHDU(convolved, name="HighRes observation", header=h2))
+            hdul.append(fits.ImageHDU(convolved, name="HighRes obs", header=h2))
             hdul.writeto(os.path.join(datapath, f"{i:04d}.fits"), overwrite=True)
             del convolved, final
             gc.collect()
@@ -363,17 +363,3 @@ class BinarySystem:
        Observed: {'Yes' if self.is_observed else 'No'}
 """
 
-
-# import dataclasses
-# @dataclass(init=True, frozen=True, repr=True)
-# class _PSFData():
-
-#     def __init__(self, psf: list[_xt.Array]):
-#         self.psf = psf
-#         self.psf_x = None
-#         self.psf_y = None
-#         self.meta = None
-#         self.shape = None
-    
-#     def __repr__(self):
-#         return f"PSFData(shape={self.shape}, meta={self.meta})"
