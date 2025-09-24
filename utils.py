@@ -19,6 +19,24 @@ __all__ = [
 ##############
 
 
+def load_psf(filepath: str):
+    """
+    Loads a PSF from a FITS file.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the FITS file containing the PSF data.
+
+    Returns
+    -------
+    psf_data : list of np.ndarray
+        A list containing the PSF data arrays in the order:
+        [psf_2d, psf_x, psf_y, psf_hr].
+    """
+    return PSFData(psf=filepath)
+
+
 def load_fits(filepath: str, return_header: bool = False, as_masked_array: bool = True):
     """
     Loads a FITS file.
@@ -292,7 +310,7 @@ class Logger:
 
 import dataclasses as _dc
 
-@_dc.dataclass(init=True, frozen=True, repr=True)
+@_dc.dataclass(init=True, frozen=True, repr=False)
 class PSFData:
     psf: list[_Array]|fits.HDUList|str
 
@@ -349,3 +367,6 @@ class PSFData:
     @property
     def psf_hr(self):
         return self._psf_hr
+
+    def __repr__(self):
+        return f"PSFData(shape={self.shape})"
