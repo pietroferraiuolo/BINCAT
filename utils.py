@@ -156,6 +156,29 @@ def newtn() -> str:
         Current time in a string format.
     """
     return _time.strftime("%Y%m%d_%H%M%S")
+
+
+#######################
+##  OTHER UTILITIES  ##
+#######################
+
+import functools
+
+def timer(func: callable) -> callable:
+    """Decorator to time the execution of a function."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = _time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = _time.perf_counter()
+        h = (end_time - start_time) // 3600
+        m = (end_time - start_time) % 3600 // 60
+        s = (end_time - start_time) % 60
+        print(f"Execution time: {int(h):02d}:{int(m):02d}:{s:.2f} (h:m:s)")
+        return result
+
+    return wrapper
     
 
 #######################
