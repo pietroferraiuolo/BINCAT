@@ -94,7 +94,7 @@ class BinarySystem:
             self.M1, collecting_area=self.collecting_area, integration_time=self.t_int
         )
         self._base_map = self._create_base_map()
-
+ 
 
     def observe(self, ccd: CCD, map_dtype: str = "float32") -> str:
         """
@@ -133,6 +133,7 @@ class BinarySystem:
         h2 = hfd(header)
         h1 = hfd(imgHeader)
         mdtype = xp.float if map_dtype == "float32" else xp.double
+        
         for img in tqdm(
             self.transit(), desc=f"[{tn}] Observing...", unit="images", total=N
         ):
@@ -148,8 +149,7 @@ class BinarySystem:
             # Add Poisson noise and Readout Noise to the convolved image
             # noisy = _np.random.poisson(convolved).astype(_np.float32)
             # noisy += _np.random.normal(0, 5, size=noisy.shape)  # readout noise
-            # del convolved
-            # gc.collect()
+            
             final = ccd.sample_psf(psf=convolved)
             hdul = fits.HDUList()
             hdul.append(fits.PrimaryHDU(final[0], header=h1))
@@ -160,7 +160,26 @@ class BinarySystem:
             del convolved, final
             gc.collect()
             i += 1
-
+        
+        # Computing reference PSF for fitting purposes
+        base_source = self._base_map.copy()
+        base_source[_np.where(base_source != 0)] = self._Mtot
+        convolved = _p.convolve_fft(
+            base_source, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True)
+        final = ccd.sample_psf(psf=convolved)
+        hdul = fits.HDUList()
+        for k in ["M1", "M2", "DISTMAS", 'PHI']:
+            h1.pop(k)
+            h2.pop(k)
+        h1['GMAG'] = (self._Mtot, 'Calibration G-Magnitude of the expected source')
+        h2['GMAG'] = (self._Mtot, 'Calibration G-Magnitude of the expected source')
+        hdul.append(fits.PrimaryHDU(final[0], header=h1))
+        hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
+        hdul.append(fits.ImageHDU(final[2], name="PSF_Y"))
+        hdul.append(fits.ImageHDU(convolved, name="HighRes Calib", header=h2))
+        hdul.writeto(os.path.join(datapath, f"calibration.fits"), overwrite=True)
+        del convolved, final
+        gc.collect()
         _l.log("Convolution complete.", level="INFO")
         self.is_observed = True
         return tn

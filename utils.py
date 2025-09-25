@@ -1,4 +1,6 @@
+import xupy as xp
 import time as _time
+from xupy import typings as _xt
 from astropy.io import fits
 from numpy.typing import ArrayLike as _Array
 from numpy.ma import MaskedArray as _masked_array
@@ -305,8 +307,135 @@ class Logger:
 
 
 #################
-## CLASS UTILS ##
+##  PSF UTILS  ##
 #################
+
+import matplotlib.pyplot as _plt
+from astropy.visualization import (
+    ImageNormalize,
+    MinMaxInterval,
+    LogStretch,
+)
+
+def display_psf(
+    psf: _xt.Optional[_xt.ArrayLike] = None,
+    mode: str = "all",
+    **kwargs: dict[str, _xt.Any],
+) -> None:
+    """Display the PSF of the Gaia telescope.
+
+    Parameters
+    ----------
+    mode : str, optional
+        The mode of display. Options are '2d' for 2D display and 'x' or 'y' for
+        relative axes PSFs.
+        Default is '2d'.
+    **kwargs : dict, optional
+        Additional keyword arguments to pass to the display function (`plt.imshow`).
+    """
+    try:
+        if isinstance(psf, (list, tuple)) and len(psf) == 3:
+            psf_x = psf[1]
+            psf_y = psf[2]
+            psf = psf[0]
+        elif isinstance(psf, _xt.ArrayLike):
+            psf_x, psf_y = computeXandYpsf(psf=psf)
+            if (
+                psf_x.shape[0] != psf.shape[1]
+                and psf_y.shape[0] != psf.shape[0]
+            ):
+                raise ValueError("Something's wrong with the passed PSF")
+    except Exception as e:
+        _l.log(e, level="ERROR")
+        raise (e)
+    if mode == 'all':
+        
+        fig = _plt.figure(figsize=(8, 4))
+
+        # Left: imshow (spans full height, 1/3 width)
+        cmap = kwargs.pop("cmap", "gist_heat")
+        aspect = kwargs.pop("aspect", "auto")
+        extent = kwargs.pop("extent", (-psf.shape[0]//2, psf.shape[0]//2, -psf.shape[1]//2, psf.shape[1]//2))
+        origin = kwargs.pop("origin", "lower")
+        
+        ax1 = _plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=1)
+        ax1.imshow(psf, cmap=cmap, aspect=aspect, extent=extent, origin=origin, **kwargs)
+        ax1.axis("off")  # to hide axes
+
+        # Right top: first plot (top half of right, 2/3 width)
+        ax2 = _plt.subplot2grid((2, 3), (0, 1), rowspan=1, colspan=2)
+        ax2.plot(psf_x, linewidth=2, color="tab:red")
+        ax2.yaxis.set_label_position("right")
+        ax2.yaxis.set_ticks_position("right")
+        ax2.xaxis.set_ticklabels([])
+        ax2.grid(True, linestyle="--", alpha=0.85)
+
+        # Right bottom: second plot (bottom half of right, 2/3 width)
+        ax3 = _plt.subplot2grid((2, 3), (1, 1), rowspan=1, colspan=2)
+        ax3.plot(psf_y, linewidth=2, color="tab:red")
+        ax3.xaxis.set_ticklabels([])
+        ax3.yaxis.set_label_position("right")
+        ax3.yaxis.set_ticks_position("right")
+        ax3.grid(True, linestyle="--", alpha=0.85)
+
+        fig.suptitle(
+            "2D PSF" + ' '*25 + "1D Profiles: AL (up) | AC (down)",
+            fontsize=14,
+            weight="semibold",
+        )
+        _plt.tight_layout()
+        _plt.show()
+    elif mode == '2d':
+        cmap = kwargs.pop("cmap", "gist_heat")
+        extent = kwargs.pop("extent", (-psf.shape[0]//2, psf.shape[0]//2, -psf.shape[1]//2, psf.shape[1]//2))
+        aspect = kwargs.pop("aspect", "auto")
+        origin = kwargs.pop("origin", "lower")
+        
+        norm = ImageNormalize(
+            vmin=xp.np.nanmin(psf),
+            vmax=xp.np.nanmax(psf),
+            stretch=LogStretch(500),
+            interval=MinMaxInterval(),
+        )
+        normal = kwargs.pop("norm", norm)
+        fig = _plt.figure()
+        _plt.imshow(psf, origin=origin, cmap=cmap, norm=normal, extent=extent, aspect=aspect, **kwargs)
+        _plt.colorbar()
+        _plt.title("CCD PSF")
+        _plt.xlabel("AL [px]")
+        _plt.ylabel("AC [px]")
+    else:
+        fig = _plt.figure()
+        _plt.ylabel("Normalized PSF")
+        _plt.grid(linestyle="--")
+        y = xp.np.arange(len(psf_y)) - len(psf_y) // 2
+        x = xp.np.arange(len(psf_x)) - len(psf_x) // 2
+        _plt.title(f"PSF in {mode} direction")
+        if mode == "x":
+            _plt.plot(x, psf_x)
+            _plt.xlabel("AL [px]")
+        elif mode == "y":
+            _plt.plot(y, psf_y)
+            _plt.xlabel("AC [px]")
+        else:
+            raise ValueError("Invalid mode. Use `all`, '2d', 'x', or 'y'.")
+    _plt.show()
+    return fig
+
+def computeXandYpsf(
+    psf: _xt.Optional[_xt.ArrayLike] = None
+) -> None | tuple[_xt.ArrayLike, _xt.ArrayLike]:
+    """
+    Subroutine to compute the normalized psf in the X and Y axis of the
+    2D PSF.
+    """
+    img = psf.copy()
+    psf_x =  xp.sum(img, axis=0)
+    psf_x /= xp.sum(psf_x)  # normalize
+    psf_y =  xp.sum(img, axis=1)
+    psf_y /= xp.sum(psf_y)
+    return psf_x, psf_y
+
 
 import dataclasses as _dc
 

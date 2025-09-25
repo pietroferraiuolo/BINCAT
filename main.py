@@ -1,8 +1,8 @@
 from simulator import BinarySystem, CCD
 
-def main():
+def main(M1, M2, distance):
     ccd = CCD(psf="data/simulations/PSFs/1062x2124_gpsf.fits")
-    bs = BinarySystem(ccd=ccd, M1=7, M2=7, distance=200)
+    bs = BinarySystem(ccd=ccd, M1=M1, M2=M2, distance=distance)
 
     tn = bs.observe(ccd)
     print(tn)

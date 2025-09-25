@@ -1,12 +1,12 @@
 import os,xupy as xp, poppy as _poppy
-_np = xp.np
+_np = xp.np if xp.on_gpu else xp
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
 from astropy.table import QTable as _qt
 import astropy.units as _u
-from utils import *
+import utils as _ut
 
-_l = Logger()
+_l = _ut.Logger()
 basepath = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -33,23 +33,23 @@ class CCD:
 
     def __init__(
         self,
-        psf: _xt.Optional[fits.HDUList | _xt.ArrayLike | str] = None,
+        psf: _xt.Optional[_ut.fits.HDUList | _xt.ArrayLike | str] = None,
         **kwargs: dict[str, _xt.Any],
     ):
         """The constructor"""
         if psf is not None:
-            if isinstance(psf, fits.HDUList):
+            if isinstance(psf, _ut.fits.HDUList):
                 self._psf = psf
                 self._meta = psf[0].header
             elif isinstance(psf, str):
-                self._psf = fits.open(psf)
+                self._psf = _ut.fits.open(psf)
                 self._meta = self._psf[0].header
             else:
                 raise TypeError(
                     "`psf` must be an astropy.io.fits.HDUList or a string path to a FITS file."
                 )
             self.psf = self._psf[0].data
-            self._computeXandYpsf()
+            self.psf_x, self.psf_y = _ut.computeXandYpsf(self.psf)
         else:
             self._psf = self.psf = None
             self.psf_x = None
@@ -86,7 +86,7 @@ class CCD:
         self._wc_conditions = ["{G}<13", "13<={G}<16", "16<={G}"]
 
     @property
-    def header(self) -> fits.Header | None:
+    def header(self) -> _ut.fits.Header | None:
         """
         Returns the header of the PSF FITS file if available.
         """
@@ -94,7 +94,7 @@ class CCD:
 
     def rebin_psf(
         self,
-        psf: _xt.Optional[fits.HDUList | _xt.ArrayLike] = None,
+        psf: _xt.Optional[_ut.fits.HDUList | _xt.ArrayLike] = None,
         *,
         rebin_factor: int = 2,
         axis_ratio: tuple[int, int] = (1, 1),
@@ -123,7 +123,7 @@ class CCD:
             raise ValueError("axis_ratio must be a tuple of two positive integers.")
         self._psf_bk = self.psf.copy()
         self.psf = _poppy.utils.rebin_array(psf, px_ratio)
-        self._computeXandYpsf()
+        self.psf_x, self.psf_y = _ut.computeXandYpsf(self.psf)
         self.rebinned = True
         return "Rebinning complete."
 
@@ -150,12 +150,11 @@ class CCD:
             ratio = int(self.pxscale_factor)
             rbratio = (rbfactor, rbfactor * ratio)
         psf_2d = _poppy.utils.rebin_array(psf, rbratio)
-        psf_x, psf_y = self._computeXandYpsf(psf=psf_2d)
+        psf_x, psf_y = _ut.computeXandYpsf(psf=psf_2d)
         return psf_2d, psf_x, psf_y
 
     def display_psf(
         self,
-        psf: _xt.Optional[_xt.ArrayLike] = None,
         mode: str = "2d",
         **kwargs: dict[str, _xt.Any],
     ) -> None:
@@ -170,125 +169,49 @@ class CCD:
         **kwargs : dict, optional
             Additional keyword arguments to pass to the display function (`plt.imshow`).
         """
-        if psf is not None:
-            try:
-                if isinstance(psf, (list, tuple)) and len(psf) == 3:
-                    psf_x = psf[1]
-                    psf_y = psf[2]
-                    psf = psf[0]
-                elif isinstance(psf, _xt.ArrayLike):
-                    psf_x, psf_y = self._computeXandYpsf(psf=psf)
-                    if (
-                        psf_x.shape[0] != psf.shape[1]
-                        and psf_y.shape[0] != psf.shape[0]
-                    ):
-                        raise ValueError("Something's wrong with the passed PSF")
-            except Exception as e:
-                _l.log(e, level="ERROR")
-                raise (e)
-
-            fig = _plt.figure(figsize=(8, 4))
-
-            # Left: imshow (spans full height, 1/3 width)
+        if self._psf is None:
+            raise ValueError("PSF has not been computed yet.")
+        if mode == "2d":
             cmap = kwargs.pop("cmap", "gist_heat")
-            aspect = kwargs.pop("aspect", "auto")
-            ax1 = _plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=1)
-            ax1.imshow(psf, cmap=cmap, aspect=aspect)
-            ax1.axis("off")  # to hide axes
-
-            # Right top: first plot (top half of right, 2/3 width)
-            ax2 = _plt.subplot2grid((2, 3), (0, 1), rowspan=1, colspan=2)
-            ax2.plot(psf_x, linewidth=2, color="tab:red")
-            ax2.yaxis.set_label_position("right")
-            ax2.yaxis.set_ticks_position("right")
-            ax2.xaxis.set_ticklabels([])
-            ax2.grid(True, linestyle="--", alpha=0.85)
-
-            # Right bottom: second plot (bottom half of right, 2/3 width)
-            ax3 = _plt.subplot2grid((2, 3), (1, 1), rowspan=1, colspan=2)
-            ax3.plot(psf_y, linewidth=2, color="tab:red")
-            ax3.xaxis.set_ticklabels([])
-            ax3.yaxis.set_label_position("right")
-            ax3.yaxis.set_ticks_position("right")
-            ax3.grid(True, linestyle="--", alpha=0.85)
-
-            fig.suptitle(
-                "2D PSF (left) and 1D Profiles (right): X (up) and Y (down)",
-                fontsize=14,
-                weight="semibold",
+            from astropy.visualization import (
+                ImageNormalize,
+                MinMaxInterval,
+                LogStretch,
             )
-            _plt.tight_layout()
-            _plt.show()
-        else:
-            if self._psf is None:
-                raise ValueError("PSF has not been computed yet.")
-            if mode == "2d":
-                if not self.rebinned:
-                    _poppy.display_psf(
-                        self._psf, title="CCD PSF", normalize="peak", **kwargs
-                    )
-                    return
-                else:
-                    cmap = kwargs.pop("cmap", "gist_heat")
-                    from astropy.visualization import (
-                        ImageNormalize,
-                        MinMaxInterval,
-                        LogStretch,
-                    )
 
-                    norm = ImageNormalize(
-                        vmin=xp.np.nanmin(self.psf),
-                        vmax=xp.np.nanmax(self.psf),
-                        stretch=LogStretch(500),
-                        interval=MinMaxInterval(),
-                    )
-                    fig = _plt.figure()
-                    _plt.imshow(self.psf, cmap=cmap, norm=norm, **kwargs)
-                    _plt.colorbar()
-                    _plt.title("CCD PSF")
-                    _plt.xlabel("X [px]")
-                    _plt.ylabel("Y [px]")
+            norm = ImageNormalize(
+                vmin=xp.np.nanmin(self.psf),
+                vmax=xp.np.nanmax(self.psf),
+                stretch=LogStretch(500),
+                interval=MinMaxInterval(),
+            )
+            fig = _plt.figure()
+            _plt.imshow(self.psf, cmap=cmap, norm=norm, **kwargs)
+            _plt.colorbar()
+            _plt.title("CCD PSF")
+            _plt.xlabel("X [px]")
+            _plt.ylabel("Y [px]")
+        else:
+            fig = _plt.figure()
+            _plt.xlabel("arcsec")
+            _plt.ylabel("Normalized PSF")
+            _plt.grid(linestyle="--")
+            y = _np.arange(len(self.psf_y)) * _u.pixel
+            y -= len(y) // 2 * _u.pixel  # center the y-axis
+            y *= self.pxscale_y
+            x = _np.arange(len(self.psf_x)) * _u.pixel
+            x -= len(x) // 2 * _u.pixel  # center the x-axis
+            x *= self.pxscale_x
+            _plt.title(f"PSF in {mode} direction")
+            if mode == "x":
+                _plt.plot(x, self.psf_x)
+            elif mode == "y":
+                _plt.plot(y, self.psf_y)
             else:
-                fig = _plt.figure()
-                _plt.xlabel("arcsec")
-                _plt.ylabel("Normalized PSF")
-                _plt.grid(linestyle="--")
-                y = _np.arange(len(self.psf_y)) * _u.pixel
-                y -= len(y) // 2 * _u.pixel  # center the y-axis
-                y *= self.pxscale_y
-                x = _np.arange(len(self.psf_x)) * _u.pixel
-                x -= len(x) // 2 * _u.pixel  # center the x-axis
-                x *= self.pxscale_x
-                _plt.title(f"PSF in {mode} direction")
-                if mode == "x":
-                    _plt.plot(x, self.psf_x)
-                elif mode == "y":
-                    _plt.plot(y, self.psf_y)
-                else:
-                    raise ValueError("Invalid mode. Use '2d', 'x', or 'y'.")
+                raise ValueError("Invalid mode. Use '2d', 'x', or 'y'.")
         _plt.show()
         return fig
 
-    def _computeXandYpsf(
-        self, psf: _xt.Optional[_xt.ArrayLike] = None
-    ) -> None | tuple[_xt.ArrayLike, _xt.ArrayLike]:
-        """
-        Subroutine to compute the normalized psf in the X and Y axis of the
-        2D PSF.
-        """
-        if psf is None:
-            img = self.psf.copy()
-        else:
-            img = psf.copy()
-        psf_x = _np.sum(img, axis=0)
-        psf_x /= _np.sum(psf_x)  # normalize
-        psf_y = _np.sum(img, axis=1)
-        psf_y /= _np.sum(psf_y)
-        self.psf_x = psf_x
-        self.psf_y = psf_y
-        if psf is not None:
-            return psf_x, psf_y
-        return
 
     def __repr__(self):
         """String representation of the CCD."""
