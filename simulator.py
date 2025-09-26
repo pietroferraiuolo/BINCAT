@@ -137,12 +137,9 @@ class BinarySystem:
         for img in tqdm(
             self.transit(), desc=f"[{tn}] Observing...", unit="images", total=N
         ):
-            y, x = _np.where(img != 0)
-            if len(y) != 2 or len(x) != 2:
-                raise ValueError("Something's wrong with the binary map")
-            phi = _np.arctan(_np.abs(y[1]-y[0])/_np.abs(x[1]-x[0]))*_u.rad
-            h1['PHI'] = (phi.to_value(_u.deg), 'Position angle of companion star [deg]')
-            h2['PHI'] = (phi.to_value(_u.deg), 'Position angle of companion star [deg]')
+            phi = self.compute_scan_angle(img)
+            h1['PHI'] = (phi.value, 'Position angle of companion star [deg]')
+            h2['PHI'] = (phi.value, 'Position angle of companion star [deg]')
             convolved = _p.convolve_fft(
                 img, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True)
             
@@ -243,6 +240,40 @@ class BinarySystem:
         x, y = _np.where(ring == 1)
         for i, j in zip(x, y):
             yield (i, j)
+    
+    def compute_scan_angle(self, img: _xt.Array) -> _u.Quantity:
+        """
+        Compute the scan angle of the binary system from a given image.
+
+        Parameters
+        ----------
+        img : _xt.Array
+            The input image of the binary system.
+
+        Returns
+        -------
+        _u.Quantity
+            The scan angle in radians.
+        """
+        y, x = xp.np.where(img != 0)
+        xc,yc = self._base_map.shape[1]//2, self._base_map.shape[0]//2
+        xi = [k for k in x if k != xc]
+        yi = [k for k in y if k != yc]
+        if len(xi) == 0 and len (yi) > 0:
+            xi = xc
+            yi = yi[0]
+        elif len(yi) == 0 and len (xi) > 0:
+            yi = yc
+            xi = xi[0]
+        elif len(yi) == 0 and len (xi) == 0:
+            raise ValueError("Something's wrong with the binary map")
+        else:
+            xi = xi[0]
+            yi = yi[0]
+        dx = xi - xc
+        dy = yi - yc
+        phi = (xp.np.arctan2(dy, dx)) % (2 * xp.np.pi) * _u.rad
+        return phi.to(_u.deg)
 
     def _create_base_map(self):
         """

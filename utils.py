@@ -1,11 +1,14 @@
-import xupy as xp
 import time as _time
+import xupy as _xp, os as _os
 from xupy import typings as _xt
 from astropy.io import fits
 from numpy.typing import ArrayLike as _Array
 from numpy.ma import MaskedArray as _masked_array
 from numpy import uint8 as _uint8
 from typing import Any as _Any
+
+basepath = "/mnt/nas/BINCAT/data"
+simpath = f"{basepath}/simulations"
 
 __all__ = [
     "load_fits",
@@ -19,6 +22,109 @@ __all__ = [
 ##############
 ## OS UTILS ##
 ##############
+
+
+def getFileList(tn: str = None, fold: str = None, key: str = None) -> list[str]:
+    """
+    Search for files in a given tracking number or complete path, sorts them and
+    puts them into a list.
+
+    Parameters
+    ----------
+    tn : str
+        Tracking number of the data in the OPDImages folder.
+    fold : str, optional
+        Folder in which searching for the tracking number. If None, the default
+        folder is the OPD_IMAGES_ROOT_FOLDER.
+    key : str, optional
+        A key which identify specific files to return
+
+    Returns
+    -------
+    fl : list of str
+        List of sorted files inside the folder.
+
+    How to Use it
+    -------------
+    If the complete path for the files to retrieve is available, then this function
+    should be called with the 'fold' argument set with the path, while 'tn' is
+    defaulted to None.
+
+    In any other case, the tn must be given: it will search for the tracking
+    number into the OPDImages folder, but if the search has to point another
+    folder, then the fold argument comes into play again. By passing both the
+    tn (with a tracking number) and the fold argument (with only the name of the
+    folder) then the search for files will be done for the tn found in the
+    specified folder. Hereafter there is an example, with the correct use of the
+    key argument too.
+
+    Examples
+    --------
+
+    Here are some examples regarding the use of the 'key' argument. Let's say w
+    e need a list of files inside ''tn = '20160516_114916' '' in the IFFunctions
+    folder.
+
+        >>> iffold = 'IFFunctions'
+        >>> tn = '20160516_114916'
+        >>> getFileList(tn, fold=iffold)
+        ['.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/cmdMatrix.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0000.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0001.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0002.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0003.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/modesVector.fits']
+
+    Let's suppose we want only the list of 'mode_000x.fits' files:
+
+        >>> getFileList(tn, fold=iffold, key='mode_')
+        ['.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0000.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0001.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0002.fits',
+         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0003.fits']
+
+    Notice that, in this specific case, it was necessary to include the undersc
+    ore after 'mode' to exclude the 'modesVector.fits' file from the list.
+    """
+    if tn is None and fold is not None:
+        fl = sorted([_os.path.join(fold, file) for file in _os.listdir(fold)])
+    else:
+        try:
+            paths = _findTracknum(tn, complete_path=True)
+            if isinstance(paths, str):
+                paths = [paths]
+            for path in paths:
+                if fold is None:
+                    fl = []
+                    fl.append(
+                        sorted(
+                            [_os.path.join(path, file) for file in _os.listdir(path)]
+                        )
+                    )
+                elif fold in path.split("/")[-2]:
+                    fl = sorted(
+                        [_os.path.join(path, file) for file in _os.listdir(path)]
+                    )
+                else:
+                    continue
+        except Exception as exc:
+            raise FileNotFoundError(
+                f"Invalid Path: no data found for tn '{tn}'"
+            ) from exc
+    if len(fl) == 1:
+        fl = fl[0]
+    if key is not None:
+        try:
+            selected_list = []
+            for file in fl:
+                if key in file.split("/")[-1]:
+                    selected_list.append(file)
+        except TypeError as err:
+            raise TypeError("'key' argument must be a string") from err
+        fl = selected_list
+    if len(fl) == 1:
+        fl = fl[0]
+    return fl
 
 
 def load_psf(filepath: str):
@@ -37,6 +143,23 @@ def load_psf(filepath: str):
         [psf_2d, psf_x, psf_y, psf_hr].
     """
     return PSFData(psf=filepath)
+
+
+def load_psf_cube(tn: str) -> list["PSFData"]:
+    """
+    Load a series of PSF FITS files into a list of PSFData objects.
+
+    Parameters
+    ----------
+    tn : str
+        Tracking number to identify the folder containing the PSF FITS files.
+    """
+    fl = getFileList(tn)
+    __ = fl.pop(-1)
+    psf_cube = []
+    for f in fl:
+        psf_cube.append(load_psf(f))
+    return psf_cube
 
 
 def load_fits(filepath: str, return_header: bool = False, as_masked_array: bool = True):
@@ -189,6 +312,7 @@ def newtn() -> str:
 
 import functools
 
+
 def timer(func: callable) -> callable:
     """Decorator to time the execution of a function."""
 
@@ -204,7 +328,41 @@ def timer(func: callable) -> callable:
         return result
 
     return wrapper
-    
+
+
+def _findTracknum(tn: str, complete_path: bool = False) -> str | list[str]:
+    """
+    Search for the tracking number given in input within all the data path subfolders.
+
+    Parameters
+    ----------
+    tn : str
+        Tracking number to be searched.
+    complete_path : bool, optional
+        Option for wheter to return the list of full paths to the folders which
+        contain the tracking number or only their names.
+
+    Returns
+    -------
+    tn_path : list of str
+        List containing all the folders (within the OPTData path) in which the
+        tracking number is present, sorted in alphabetical order.
+    """
+    tn_path = []
+    for fold in _os.listdir(simpath):
+        search_fold = _os.path.join(simpath, fold)
+        if not _os.path.isdir(search_fold):
+            continue
+        if tn in _os.listdir(search_fold):
+            if complete_path:
+                tn_path.append(_os.path.join(search_fold, tn))
+            else:
+                tn_path.append(fold)
+    path_list = sorted(tn_path)
+    if len(path_list) == 1:
+        path_list = path_list[0]
+    return path_list
+
 
 #######################
 ## LOGGING UTILITIES ##
@@ -317,6 +475,7 @@ from astropy.visualization import (
     LogStretch,
 )
 
+
 def display_psf(
     psf: _xt.Optional[_xt.ArrayLike] = None,
     mode: str = "all",
@@ -340,26 +499,33 @@ def display_psf(
             psf = psf[0]
         elif isinstance(psf, _xt.ArrayLike):
             psf_x, psf_y = computeXandYpsf(psf=psf)
-            if (
-                psf_x.shape[0] != psf.shape[1]
-                and psf_y.shape[0] != psf.shape[0]
-            ):
+            if psf_x.shape[0] != psf.shape[1] and psf_y.shape[0] != psf.shape[0]:
                 raise ValueError("Something's wrong with the passed PSF")
     except Exception as e:
         _l.log(e, level="ERROR")
         raise (e)
-    if mode == 'all':
-        
+    if mode == "all":
+
         fig = _plt.figure(figsize=(8, 4))
 
         # Left: imshow (spans full height, 1/3 width)
         cmap = kwargs.pop("cmap", "gist_heat")
         aspect = kwargs.pop("aspect", "auto")
-        extent = kwargs.pop("extent", (-psf.shape[0]//2, psf.shape[0]//2, -psf.shape[1]//2, psf.shape[1]//2))
+        extent = kwargs.pop(
+            "extent",
+            (
+                -psf.shape[0] // 2,
+                psf.shape[0] // 2,
+                -psf.shape[1] // 2,
+                psf.shape[1] // 2,
+            ),
+        )
         origin = kwargs.pop("origin", "lower")
-        
+
         ax1 = _plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=1)
-        ax1.imshow(psf, cmap=cmap, aspect=aspect, extent=extent, origin=origin, **kwargs)
+        ax1.imshow(
+            psf, cmap=cmap, aspect=aspect, extent=extent, origin=origin, **kwargs
+        )
         ax1.axis("off")  # to hide axes
 
         # Right top: first plot (top half of right, 2/3 width)
@@ -379,27 +545,43 @@ def display_psf(
         ax3.grid(True, linestyle="--", alpha=0.85)
 
         fig.suptitle(
-            "2D PSF" + ' '*25 + "1D Profiles: AL (up) | AC (down)",
+            "2D PSF" + " " * 25 + "1D Profiles: AL (up) | AC (down)",
             fontsize=14,
             weight="semibold",
         )
         _plt.tight_layout()
         _plt.show()
-    elif mode == '2d':
+    elif mode == "2d":
         cmap = kwargs.pop("cmap", "gist_heat")
-        extent = kwargs.pop("extent", (-psf.shape[0]//2, psf.shape[0]//2, -psf.shape[1]//2, psf.shape[1]//2))
+        extent = kwargs.pop(
+            "extent",
+            (
+                -psf.shape[0] // 2,
+                psf.shape[0] // 2,
+                -psf.shape[1] // 2,
+                psf.shape[1] // 2,
+            ),
+        )
         aspect = kwargs.pop("aspect", "auto")
         origin = kwargs.pop("origin", "lower")
-        
+
         norm = ImageNormalize(
-            vmin=xp.np.nanmin(psf),
-            vmax=xp.np.nanmax(psf),
+            vmin=_xp.np.nanmin(psf),
+            vmax=_xp.np.nanmax(psf),
             stretch=LogStretch(500),
             interval=MinMaxInterval(),
         )
         normal = kwargs.pop("norm", norm)
         fig = _plt.figure()
-        _plt.imshow(psf, origin=origin, cmap=cmap, norm=normal, extent=extent, aspect=aspect, **kwargs)
+        _plt.imshow(
+            psf,
+            origin=origin,
+            cmap=cmap,
+            norm=normal,
+            extent=extent,
+            aspect=aspect,
+            **kwargs,
+        )
         _plt.colorbar()
         _plt.title("CCD PSF")
         _plt.xlabel("AL [px]")
@@ -408,8 +590,8 @@ def display_psf(
         fig = _plt.figure()
         _plt.ylabel("Normalized PSF")
         _plt.grid(linestyle="--")
-        y = xp.np.arange(len(psf_y)) - len(psf_y) // 2
-        x = xp.np.arange(len(psf_x)) - len(psf_x) // 2
+        y = _xp.np.arange(len(psf_y)) - len(psf_y) // 2
+        x = _xp.np.arange(len(psf_x)) - len(psf_x) // 2
         _plt.title(f"PSF in {mode} direction")
         if mode == "x":
             _plt.plot(x, psf_x)
@@ -422,54 +604,65 @@ def display_psf(
     _plt.show()
     return fig
 
+
 def computeXandYpsf(
-    psf: _xt.Optional[_xt.ArrayLike] = None
+    psf: _xt.Optional[_xt.ArrayLike] = None,
 ) -> None | tuple[_xt.ArrayLike, _xt.ArrayLike]:
     """
     Subroutine to compute the normalized psf in the X and Y axis of the
     2D PSF.
     """
     img = psf.copy()
-    psf_x =  xp.sum(img, axis=0)
-    psf_x /= xp.sum(psf_x)  # normalize
-    psf_y =  xp.sum(img, axis=1)
-    psf_y /= xp.sum(psf_y)
+    psf_x = _xp.sum(img, axis=0)
+    psf_x /= _xp.sum(psf_x)  # normalize
+    psf_y = _xp.sum(img, axis=1)
+    psf_y /= _xp.sum(psf_y)
     return psf_x, psf_y
 
 
 import dataclasses as _dc
 
+
 @_dc.dataclass(init=True, frozen=True, repr=False)
 class PSFData:
-    psf: list[_Array]|fits.HDUList|str
+    psf: list[_Array] | fits.HDUList | str
 
     def __post_init__(self):
         if isinstance(self.psf, list):
-            object.__setattr__(self, '_psf_2d', self.psf[0])
-            object.__setattr__(self, '_psf_x', self.psf[1])
-            object.__setattr__(self, '_psf_y', self.psf[2])
-            object.__setattr__(self, '_psf_hr', self.psf[3])
-            object.__setattr__(self, '_meta', None)
-            object.__setattr__(self, '_shape', self._psf_2d.shape)
+            object.__setattr__(self, "_psf_2d", self.psf[0])
+            object.__setattr__(self, "_psf_x", self.psf[1])
+            object.__setattr__(self, "_psf_y", self.psf[2])
+            object.__setattr__(self, "_psf_hr", self.psf[3])
+            object.__setattr__(self, "_meta", None)
+            object.__setattr__(self, "_shape", self._psf_2d.shape)
         elif isinstance(self.psf, fits.HDUList):
-            object.__setattr__(self, '_psf_2d', self.psf[0].data)
-            object.__setattr__(self, '_psf_x', self.psf[1].data)
-            object.__setattr__(self, '_psf_y', self.psf[2].data)
-            object.__setattr__(self, '_psf_hr', self.psf[3].data)
-            object.__setattr__(self, '_meta', self.psf[0].header)
-            object.__setattr__(self, '_shape', self._psf_2d.shape)
+            object.__setattr__(self, "_psf_2d", self.psf[0].data)
+            object.__setattr__(self, "_psf_x", self.psf[1].data)
+            object.__setattr__(self, "_psf_y", self.psf[2].data)
+            object.__setattr__(self, "_psf_hr", self.psf[3].data)
+            object.__setattr__(self, "_meta", self.psf[0].header)
+            object.__setattr__(self, "_shape", self._psf_2d.shape)
         elif isinstance(self.psf, str):
             with fits.open(self.psf) as hdul:
-                object.__setattr__(self, '_psf_2d', hdul[0].data)
-                object.__setattr__(self, '_psf_x', hdul[1].data)
-                object.__setattr__(self, '_psf_y', hdul[2].data)
-                object.__setattr__(self, '_psf_hr', hdul[3].data)
-                object.__setattr__(self, 
-                                   '_meta', 
-                                   {0: hdul[0].header, 1: hdul[1].header, 2: hdul[2].header, 3: hdul[3].header})
-                object.__setattr__(self, '_shape', self._psf_2d.shape)
+                object.__setattr__(self, "_psf_2d", hdul[0].data)
+                object.__setattr__(self, "_psf_x", hdul[1].data)
+                object.__setattr__(self, "_psf_y", hdul[2].data)
+                object.__setattr__(self, "_psf_hr", hdul[3].data)
+                object.__setattr__(
+                    self,
+                    "_meta",
+                    {
+                        0: hdul[0].header,
+                        1: hdul[1].header,
+                        2: hdul[2].header,
+                        3: hdul[3].header,
+                    },
+                )
+                object.__setattr__(self, "_shape", self._psf_2d.shape)
         else:
-            raise TypeError("PSF must be a list, fits.HDUList, or a fits file path string.")
+            raise TypeError(
+                "PSF must be a list, fits.HDUList, or a fits file path string."
+            )
 
     @property
     def psf_2d(self) -> _Array:
@@ -486,7 +679,9 @@ class PSFData:
     @property
     def meta(self) -> dict[str, _Any]:
         if self._meta is None:
-            raise TypeError("For header to be returned PSF must be a fits.HDUList or a fits file path string.")
+            raise TypeError(
+                "For header to be returned PSF must be a fits.HDUList or a fits file path string."
+            )
         return self._meta
 
     @property
@@ -496,6 +691,19 @@ class PSFData:
     @property
     def psf_hr(self):
         return self._psf_hr
+    
+    @property
+    def phi(self):
+        try:
+            return self.meta[0]['PHI']
+        except (KeyError, TypeError):
+            raise KeyError("PHI not found in metadata.")
 
     def __repr__(self):
-        return f"PSFData(shape={self.shape})"
+        try:
+            phi = self.meta[0]["PHI"]
+            arg = f"φ={phi:.3f}°"
+        except (KeyError, TypeError):
+            G = self.meta[0]["GMAG"]
+            arg = f"calibration, G={G:.3f}"
+        return f"PSFData({arg})"

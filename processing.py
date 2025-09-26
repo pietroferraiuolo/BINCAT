@@ -2,6 +2,7 @@ import xupy as _xp
 from xupy import typings as _xt
 import scipy.signal as _ss
 from astropy.convolution import convolve_fft as _as_convolve_fft
+from skimage.transform import resize
 
 
 def convolve_fft(
@@ -73,12 +74,68 @@ def convolve_fft(
             fftmult *= kernel_scale
             convolved = (_xp.fft.ifftn(fftmult).real).get()
         else:
-            convolved = _as_convolve_fft(image, kernel, normalize_kernel=normalize_kernel, **kwargs)
+            convolved = _as_convolve_fft(
+                image, kernel, normalize_kernel=normalize_kernel, **kwargs
+            )
     # for extra safety
     except Exception as e:
         print("Falling back to CPU convolution due to:", e)
-        convolved = _as_convolve_fft(image, kernel, normalize_kernel=normalize_kernel, **kwargs)
+        convolved = _as_convolve_fft(
+            image, kernel, normalize_kernel=normalize_kernel, **kwargs
+        )
     return convolved
 
 
-def ipd_gof(): ...
+def reduced_chi_squared(
+    observed: _xt.Array, expected: _xt.Array, errors: _xt.Array = None, ddof: int = 0
+) -> float:
+    """
+    Calculate the reduced chi-squared statistic.
+    """
+    if errors is None:
+        errors = _xp.np.ones_like(observed)
+    chi_squared = _xp.np.sum(((observed - expected) / errors) ** 2)
+    return chi_squared / (len(observed) - ddof)
+
+
+def upsample(img: _xt.Array, s: int = 4, order: str = "cubic") -> _xt.Array:
+    """
+    Upsample an image by a factor of `s` using skimage's resize function.
+
+    Parameters
+    ----------
+    img : _xt.Array
+        The input image to be upsampled. Can be a cube, with the last dimension
+        representing the image id.
+    s : int
+        The upsampling factor.
+    order : str
+        The interpolation order to use:
+        - 'nearest': Nearest-neighbor interpolation.
+        - 'linear': Bilinear interpolation.
+        - 'quadratic': Bi-quadratic interpolation.
+        - 'cubic': Bicubic interpolation.
+        - 'quartic': Bi-quartic interpolation.
+        - 'quintic': Bi-quintic interpolation.
+    """
+    if order not in ["nearest", "linear", "quadratic", "cubic", "quartic", "quintic"]:
+        raise ValueError(
+            "Invalid order. Must be one of 'nearest', 'linear', 'quadratic', 'cubic', 'quartic', 'quintic'."
+        )
+    order_map = {
+        "nearest": 0,
+        "linear": 1,
+        "quadratic": 2,
+        "cubic": 3,
+        "quartic": 4,
+        "quintic": 5,
+    }
+    out_shape = (
+        (img.shape[0] * s, img.shape[1] * s)
+        if img.ndim == 2
+        else (img.shape[0] * s, img.shape[1] * s, img.shape[2])
+    )
+    y = resize(
+        img, out_shape, order=order_map[order], anti_aliasing=False, preserve_range=True
+    )
+    return y.astype(img.dtype)
