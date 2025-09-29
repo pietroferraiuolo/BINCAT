@@ -1,92 +1,65 @@
 import xupy as _xp
 from xupy import typings as _xt
 import scipy.signal as _ss
-from astropy.convolution import convolve_fft as _as_convolve_fft
+import utils as _ut
+import astropy.units as _u
 from skimage.transform import resize
+from matplotlib import pyplot as _plt
+from grasp.stats import fit_data_points
 
 
-def convolve_fft(
-    image: _xt.Array,
-    kernel: _xt.Array,
-    dtype: _xt.Optional[_xt.DTypeLike] = _xp.float,
-    normalize_kernel: bool = True,
-    **kwargs: dict[str, _xt.Any],
-) -> _xt.Array:
+######################
+## IPD COMPUTATIONS ##
+######################
+
+def ipd_gof_harmonic(
+    observed_cube: _ut.PSFData, calibrated_psf: _ut.PSFData, errors: _xt.Array = None, ddof: int = 0, show : bool = False
+) -> float:
     """
-    Convolve an image with a kernel using FFT on GPU.
-
-    Parameters
-    ----------
-    image : xp.ndarray
-        Input image to be convolved.
-    kernel : xp.ndarray
-        Convolution kernel.
-    dtype : xp.dtype
-        Data type for computation.
-    normalize_kernel : bool or callable, optional
-        If specified, this is the function to divide kernel by to normalize it.
-        e.g., ``normalize_kernel=np.sum`` means that kernel will be modified to be:
-        ``kernel = kernel / np.sum(kernel)``.  If True, defaults to
-        ``normalize_kernel = np.sum``.
-
-    Returns
-    -------
-    numpy.ndarray
-        The convolved image (on CPU).
-
-    Raises
-    ------
-    RuntimeError
-        If GPU is not available.
+    Calculate the goodness-of-fit statistic based on harmonic mean.
     """
-    try:
-        if _xp.on_gpu:
-            MAX_NORMALIZATION = 100
-            normalization_zero_tol = 1e-8
-            complex_dtype = _xp.cfloat if dtype == _xp.float else _xp.cdouble
-            if normalize_kernel is True:
-                if kernel.sum() < 1.0 / MAX_NORMALIZATION:
-                    raise RuntimeError(
-                        "The kernel can't be normalized, because its sum is close "
-                        "to zero. The sum of the given kernel is < "
-                        f"{1.0 / MAX_NORMALIZATION:.2f}. For a zero-sum kernel, set "
-                        "normalize_kernel=False or pass a custom normalization "
-                        "function to normalize_kernel."
-                    )
-                kernel_scale = _xp.sum(kernel)
-                normalized_kernel = kernel / kernel_scale
-                kernel_scale = 1.0
-            elif normalize_kernel:
-                kernel_scale = normalize_kernel(kernel)
-                normalized_kernel = kernel / kernel_scale
-            else:
-                kernel_scale = kernel.sum()
-                if _xp.abs(kernel_scale) < normalization_zero_tol:
-                    kernel_scale = 1.0
-                    normalized_kernel = kernel
-                else:
-                    normalized_kernel = kernel / kernel_scale
-            img_g = _xp.asarray(image, dtype=complex_dtype)
-            psf_g = _xp.asarray(normalized_kernel, dtype=complex_dtype)
-            img1 = _xp.fft.fftn(img_g)
-            psffft = _xp.fft.fftn(_xp.fft.ifftshift(psf_g))
-            fftmult = img1 * psffft
-            fftmult *= kernel_scale
-            convolved = (_xp.fft.ifftn(fftmult).real).get()
-        else:
-            convolved = _as_convolve_fft(
-                image, kernel, normalize_kernel=normalize_kernel, **kwargs
-            )
-    # for extra safety
-    except Exception as e:
-        print("Falling back to CPU convolution due to:", e)
-        convolved = _as_convolve_fft(
-            image, kernel, normalize_kernel=normalize_kernel, **kwargs
-        )
-    return convolved
+    chiphi = get_chi_phi(observed_cube, calibrated_psf, errors=errors, ddof=ddof)
+
+    def harmonic_decomposition(x: float, c0: float, c2: float, s2: float) -> float:
+        x = x * _u.deg.to(_u.rad)
+        return c0 + c2*_xp.np.cos(2*x) + s2*_xp.np.sin(2*x)
+
+    fit = fit_data_points(
+        data = _xp.np.log(chiphi[:,0]), 
+        x_data = chiphi[:,1], 
+        method = harmonic_decomposition
+    )
+    _, c2, s2 = fit.coeffs
+    gof_amplitude = _xp.np.sqrt(c2**2 + s2**2)
+    gof_phase = _xp.np.arctan2(s2, c2) * _u.rad.to(_u.deg)
+    if show:
+        from grasp import plots
+        plots.regressionPlot(fit, f_type='datapoint', title=f'GoF: amp={gof_amplitude:.1e} | phase={gof_phase:.2f} deg')
+    return gof_amplitude, gof_phase
 
 
-def reduced_chi_squared(
+def get_chi_phi(
+    observed_cube: _ut.PSFData, calibrated_psf: _ut.PSFData, errors: _xt.Array = None, ddof: int = 0
+) -> tuple[_xt.Array, _xt.Array]:
+    """
+    Calculate the chi-squared and phi values for each PSF in the observed cube.
+    """
+    chi_arr = []
+    phi_arr = []
+    exp = calibrated_psf.psf_2d
+    for i in range(len(observed_cube)):
+        psf_i = observed_cube[i].psf_2d
+        phi_i = observed_cube[i].phi
+        chi_i = _reduced_chi_squared(psf_i, exp, errors=errors, ddof=ddof)
+        chi_arr.append(chi_i)
+        phi_arr.append(phi_i)
+    with _xp.NumpyContext() as np:
+        chiphi = np.array(list(zip(chi_arr, phi_arr)))
+        chiphi = chiphi[np.argsort(chiphi[:,1])]
+    return chiphi
+
+
+def _reduced_chi_squared(
     observed: _xt.Array, expected: _xt.Array, errors: _xt.Array = None, ddof: int = 0
 ) -> float:
     """
@@ -96,6 +69,65 @@ def reduced_chi_squared(
         errors = _xp.np.ones_like(observed)
     chi_squared = _xp.np.sum(((observed - expected) / errors) ** 2)
     return chi_squared / (len(observed) - ddof)
+
+
+def find_local_maxima(psf: _xt.Array | _ut.PSFData, which: str = 'al', threshold: float = 0.4, show: bool = False) -> _xt.Array:
+    """
+    Find local maxima in a 2D PSF array above a certain threshold.
+
+    Parameters
+    ----------
+    psf : _xt.Array or _ut.PSFData
+        The input PSF data. If a _ut.PSFData object is provided, the AL PSF array
+        will be extracted from it.
+    which : str
+        Which PSF to analyze: 'al' for along-scan, 'ac' for across-scan, 'both' for both.
+    threshold : float
+        The threshold above which to consider a local maximum usefull. It is given as a fraction
+        of the maximum value of the PSF. Defaults to 0.4 (40% of the maximum).
+    show : bool
+        Whether to show a plot of the PSF and its local maxima.
+
+    Returns
+    -------
+    _xt.Array
+        An array of (y, x) coordinates of the local maxima found in the PSF.
+    """
+    if isinstance(psf, _ut.PSFData):
+        if which == 'al':
+            psf = psf.psf_x
+        elif which == 'ac':
+            psf = psf.psf_y
+        elif which == 'both':
+            maxima_al = find_local_maxima(psf, which='al', show=show)
+            maxima_ac = find_local_maxima(psf, which='ac', show=show)
+            return maxima_al, maxima_ac
+        else:
+            raise ValueError("Parameter 'which' must be one of 'al', 'ac', or 'both'.")
+    elif psf.ndim != 1:
+        raise ValueError("Input psf must be a 1D array or a _ut.PSFData object.")
+    # Now psf is guaranteed to be a 1D array
+    idx_f = psf.shape[0]
+    maxima = []
+    for ix in range(1,idx_f-1):
+        p_i = psf[ix]
+        p_i_1 = psf[ix-1]
+        p_i_2 = psf[ix+1]
+        if (p_i > p_i_1 or p_i == p_i_1) and p_i > p_i_2:
+            if p_i > threshold * psf.max():
+                maxima.append((ix, p_i))
+            else: continue
+    if show:
+        _plt.figure()
+        _plt.plot(psf, label='PSF')
+        _plt.scatter(*zip(*maxima), color='red', label='Maxima')
+        _plt.legend()
+        _plt.title('Local Maxima in PSF')
+        _plt.xlabel('Pixel')
+        _plt.ylabel('Intensity')
+        _plt.grid()
+    return maxima
+
 
 
 def upsample(img: _xt.Array, s: int = 4, order: str = "cubic") -> _xt.Array:

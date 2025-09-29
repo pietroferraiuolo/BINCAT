@@ -52,12 +52,14 @@ class BinarySystem:
         ccd: CCD,
         M1: float,
         M2: float,
-        distance: float,
+        distance: float|_u.Quantity,
+        angle: float|_u.Quantity = 360.,
         **kwargs: dict[str, _xt.Any],
     ):
         """The constructor"""
         self.ccd = ccd
         self.map_shape = self.ccd.psf.shape
+        self.angle = angle * _u.deg if not isinstance(angle, _u.Quantity) else angle.to(_u.deg)
         if not isinstance(distance, _u.Quantity):
             self.distance = distance * _u.mas  # assuming input is in mas
         else:
@@ -94,7 +96,7 @@ class BinarySystem:
             self.M1, collecting_area=self.collecting_area, integration_time=self.t_int
         )
         self._base_map = self._create_base_map()
- 
+
 
     def observe(self, ccd: CCD, map_dtype: str = "float32") -> str:
         """
@@ -112,7 +114,7 @@ class BinarySystem:
             The CCD to use for the observation.
         """
         tn = newtn()
-        N = self._create_ring(radius=self.distance, shape=self.map_shape).sum()
+        N = self._create_ring(radius=self.distance).sum()
         datapath = os.path.join(
             basepath, "data", "simulations", "observations", f"{tn}"
         )
@@ -126,9 +128,9 @@ class BinarySystem:
         header = self._prepare_main_header()
         header['PIXELSCL'] = (self.ccd.header['PIXELSCL'], 'Pixel scale [mas/pixel]')
         imgHeader = self._prepare_main_header()
-        imgHeader['PXSCLREB'] = (self.ccd.pxscale_factor, 'Pixel scale rebin ratio (y/x)')
-        imgHeader['PXSCLXRB'] = (self.ccd.pxscale_x.value, 'Rebinned pixel scale in x [mas/pixel]')
-        imgHeader['PXSCLYRB'] = (self.ccd.pxscale_y.value, 'Rebinned pixel scale in y [mas/pixel]')
+        imgHeader['PXSCLREB'] = (self.ccd.pxscale_factor, 'Pxscale rebin ratio (y/x)')
+        imgHeader['PXSCLXRB'] = (self.ccd.pxscale_x.value, 'Rebinned pxscale_x [mas/pixel]')
+        imgHeader['PXSCLYRB'] = (self.ccd.pxscale_y.value, 'Rebinned pxscale_y [mas/pixel]')
         assert ccd.psf.shape == self._base_map.shape, "PSF and map shapes do not match."
         h2 = hfd(header)
         h1 = hfd(imgHeader)
@@ -161,7 +163,7 @@ class BinarySystem:
         # Computing reference PSF for fitting purposes
         base_source = self._base_map.copy()
         base_source[_np.where(base_source != 0)] = self._Mtot
-        convolved = _p.convolve_fft(
+        convolved = convolve_fft(
             base_source, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True)
         final = ccd.sample_psf(psf=convolved)
         hdul = fits.HDUList()
@@ -171,8 +173,8 @@ class BinarySystem:
         h1['GMAG'] = (self._Mtot, 'Calibration G-Magnitude of the expected source')
         h2['GMAG'] = (self._Mtot, 'Calibration G-Magnitude of the expected source')
         hdul.append(fits.PrimaryHDU(final[0], header=h1))
-        hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
-        hdul.append(fits.ImageHDU(final[2], name="PSF_Y"))
+        hdul.append(fits.ImageHDU(final[1], name="PSF_AL"))
+        hdul.append(fits.ImageHDU(final[2], name="PSF_AC"))
         hdul.append(fits.ImageHDU(convolved, name="HighRes Calib", header=h2))
         hdul.writeto(os.path.join(datapath, f"calibration.fits"), overwrite=True)
         del convolved, final
@@ -236,7 +238,7 @@ class BinarySystem:
         tuple of int
             (x, y) coordinates of the secondary star in pixels, one at a time.
         """
-        ring = self._create_ring(radius=self.distance, shape=self.map_shape)
+        ring = self._create_ring(radius=self.distance)
         x, y = _np.where(ring == 1)
         for i, j in zip(x, y):
             yield (i, j)
@@ -366,7 +368,7 @@ class BinarySystem:
         return photon_flux
 
     def _create_ring(
-        self, radius: int, shape: tuple[int, int], show: bool = False
+        self, radius: int, show: bool = False
     ) -> _np.ndarray[int, _xt.Any]:
         """
         Create a ring mask for the sky map.
@@ -383,6 +385,8 @@ class BinarySystem:
         ring_mask : numpy.ndarray
             A boolean mask where the ring is True.
         """
+        shape = self.map_shape
+        angle = self.angle.value
         from skimage.draw import disk
 
         outer_disk = disk((shape[0] // 2, shape[1] // 2), radius, shape=shape)
@@ -390,8 +394,19 @@ class BinarySystem:
         ring_mask = _np.zeros(shape, dtype=bool)
         ring_mask[outer_disk] = True
         ring_mask[inner_disk] = False  # remove inner disk, leaving only the ring
-        extent = (-shape[1] // 2, shape[1] // 2, -shape[0] // 2, shape[0] // 2)
+        if angle < 360.:
+            yc, xc = shape[0] // 2, shape[1] // 2
+            theta = _np.deg2rad(angle)
+            for y in range(shape[0]):
+                for x in range(shape[1]):
+                    if ring_mask[y, x]:
+                        dy = y - yc
+                        dx = x - xc
+                        phi = _np.arctan2(dy, dx)
+                        if not (0 <= phi <= theta):
+                            ring_mask[y, x] = False
         if show:
+            extent = (-shape[1] // 2, shape[1] // 2, -shape[0] // 2, shape[0] // 2)
             _plt.figure(figsize=(8, 7))
             _plt.imshow(ring_mask, origin="lower", extent=extent, cmap="inferno")
             _plt.xlabel("X [mas]")

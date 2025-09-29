@@ -7,7 +7,7 @@ from numpy.ma import MaskedArray as _masked_array
 from numpy import uint8 as _uint8
 from typing import Any as _Any
 
-basepath = "/mnt/nas/BINCAT/data"
+basepath = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "data")
 simpath = f"{basepath}/simulations"
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "newtn",
     "Logger",
     "fits",
+    'convolve_fft'
 ]
 
 ##############
@@ -38,53 +39,6 @@ def getFileList(tn: str = None, fold: str = None, key: str = None) -> list[str]:
         folder is the OPD_IMAGES_ROOT_FOLDER.
     key : str, optional
         A key which identify specific files to return
-
-    Returns
-    -------
-    fl : list of str
-        List of sorted files inside the folder.
-
-    How to Use it
-    -------------
-    If the complete path for the files to retrieve is available, then this function
-    should be called with the 'fold' argument set with the path, while 'tn' is
-    defaulted to None.
-
-    In any other case, the tn must be given: it will search for the tracking
-    number into the OPDImages folder, but if the search has to point another
-    folder, then the fold argument comes into play again. By passing both the
-    tn (with a tracking number) and the fold argument (with only the name of the
-    folder) then the search for files will be done for the tn found in the
-    specified folder. Hereafter there is an example, with the correct use of the
-    key argument too.
-
-    Examples
-    --------
-
-    Here are some examples regarding the use of the 'key' argument. Let's say w
-    e need a list of files inside ''tn = '20160516_114916' '' in the IFFunctions
-    folder.
-
-        >>> iffold = 'IFFunctions'
-        >>> tn = '20160516_114916'
-        >>> getFileList(tn, fold=iffold)
-        ['.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/cmdMatrix.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0000.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0001.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0002.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0003.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/modesVector.fits']
-
-    Let's suppose we want only the list of 'mode_000x.fits' files:
-
-        >>> getFileList(tn, fold=iffold, key='mode_')
-        ['.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0000.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0001.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0002.fits',
-         '.../M4/m4/data/M4Data/OPTData/IFFunctions/20160516_114916/mode_0003.fits']
-
-    Notice that, in this specific case, it was necessary to include the undersc
-    ore after 'mode' to exclude the 'modesVector.fits' file from the list.
     """
     if tn is None and fold is not None:
         fl = sorted([_os.path.join(fold, file) for file in _os.listdir(fold)])
@@ -160,6 +114,21 @@ def load_psf_cube(tn: str) -> list["PSFData"]:
     for f in fl:
         psf_cube.append(load_psf(f))
     return psf_cube
+
+
+def load_psf_calibration(tn: str) -> "PSFData":
+    """
+    Load the PSF calibration FITS file into a PSFData object.
+
+    Parameters
+    ----------
+    tn : str
+        Tracking number to identify the folder containing the PSF calibration FITS file.
+    """
+    fl = getFileList(tn)
+    f = fl.pop(-1)
+    psf_cal = load_psf(f)
+    return psf_cal
 
 
 def load_fits(filepath: str, return_header: bool = False, as_masked_array: bool = True):
@@ -531,15 +500,27 @@ def display_psf(
         # Right top: first plot (top half of right, 2/3 width)
         ax2 = _plt.subplot2grid((2, 3), (0, 1), rowspan=1, colspan=2)
         ax2.plot(psf_x, linewidth=2, color="tab:red")
+        ax2.set_xticks(
+            _xp.np.arange(0, int(psf_x.shape[0] + 1)),
+            labels=[]
+        )
+        ax2.set_yticks(
+            _xp.np.linspace(0, psf_x.max(), 4)
+        )
         ax2.yaxis.set_label_position("right")
         ax2.yaxis.set_ticks_position("right")
-        ax2.xaxis.set_ticklabels([])
         ax2.grid(True, linestyle="--", alpha=0.85)
 
         # Right bottom: second plot (bottom half of right, 2/3 width)
         ax3 = _plt.subplot2grid((2, 3), (1, 1), rowspan=1, colspan=2)
         ax3.plot(psf_y, linewidth=2, color="tab:red")
-        ax3.xaxis.set_ticklabels([])
+        ax3.set_xticks(
+            _xp.np.arange(0, int(psf_y.shape[0] + 1)),
+            labels=[]
+        )
+        ax3.set_yticks(
+            _xp.np.linspace(0, psf_y.max(), 4)
+        )
         ax3.yaxis.set_label_position("right")
         ax3.yaxis.set_ticks_position("right")
         ax3.grid(True, linestyle="--", alpha=0.85)
@@ -556,10 +537,10 @@ def display_psf(
         extent = kwargs.pop(
             "extent",
             (
-                -psf.shape[0] // 2,
-                psf.shape[0] // 2,
                 -psf.shape[1] // 2,
                 psf.shape[1] // 2,
+                -psf.shape[0] // 2,
+                psf.shape[0] // 2,
             ),
         )
         aspect = kwargs.pop("aspect", "auto")
@@ -596,9 +577,11 @@ def display_psf(
         if mode == "x":
             _plt.plot(x, psf_x)
             _plt.xlabel("AL [px]")
+            _plt.xticks(_xp.np.arange(int(x.min()), int(x.max()) + 1))
         elif mode == "y":
             _plt.plot(y, psf_y)
             _plt.xlabel("AC [px]")
+            _plt.xticks(_xp.np.arange(int(y.min()), int(y.max()) + 1))
         else:
             raise ValueError("Invalid mode. Use `all`, '2d', 'x', or 'y'.")
     _plt.show()
@@ -707,3 +690,89 @@ class PSFData:
             G = self.meta[0]["GMAG"]
             arg = f"calibration, G={G:.3f}"
         return f"PSFData({arg})"
+
+#########################
+## COMPUTING UTILITIES ##
+#########################
+
+from astropy.convolution import convolve_fft as _as_convolve_fft
+
+def convolve_fft(
+    image: _xt.Array,
+    kernel: _xt.Array,
+    dtype: _xt.Optional[_xt.DTypeLike] = _xp.float,
+    normalize_kernel: bool = True,
+    **kwargs: dict[str, _xt.Any],
+) -> _xt.Array:
+    """
+    Convolve an image with a kernel using FFT on GPU.
+
+    Parameters
+    ----------
+    image : xp.ndarray
+        Input image to be convolved.
+    kernel : xp.ndarray
+        Convolution kernel.
+    dtype : xp.dtype
+        Data type for computation.
+    normalize_kernel : bool or callable, optional
+        If specified, this is the function to divide kernel by to normalize it.
+        e.g., ``normalize_kernel=np.sum`` means that kernel will be modified to be:
+        ``kernel = kernel / np.sum(kernel)``.  If True, defaults to
+        ``normalize_kernel = np.sum``.
+
+    Returns
+    -------
+    numpy.ndarray
+        The convolved image (on CPU).
+
+    Raises
+    ------
+    RuntimeError
+        If GPU is not available.
+    """
+    try:
+        if _xp.on_gpu:
+            MAX_NORMALIZATION = 100
+            normalization_zero_tol = 1e-8
+            complex_dtype = _xp.cfloat if dtype == _xp.float else _xp.cdouble
+            if normalize_kernel is True:
+                if kernel.sum() < 1.0 / MAX_NORMALIZATION:
+                    raise RuntimeError(
+                        "The kernel can't be normalized, because its sum is close "
+                        "to zero. The sum of the given kernel is < "
+                        f"{1.0 / MAX_NORMALIZATION:.2f}. For a zero-sum kernel, set "
+                        "normalize_kernel=False or pass a custom normalization "
+                        "function to normalize_kernel."
+                    )
+                kernel_scale = _xp.sum(kernel)
+                normalized_kernel = kernel / kernel_scale
+                kernel_scale = 1.0
+            elif normalize_kernel:
+                kernel_scale = normalize_kernel(kernel)
+                normalized_kernel = kernel / kernel_scale
+            else:
+                kernel_scale = kernel.sum()
+                if _xp.abs(kernel_scale) < normalization_zero_tol:
+                    kernel_scale = 1.0
+                    normalized_kernel = kernel
+                else:
+                    normalized_kernel = kernel / kernel_scale
+            img_g = _xp.asarray(image, dtype=complex_dtype)
+            psf_g = _xp.asarray(normalized_kernel, dtype=complex_dtype)
+            img1 = _xp.fft.fftn(img_g)
+            psffft = _xp.fft.fftn(_xp.fft.ifftshift(psf_g))
+            fftmult = img1 * psffft
+            fftmult *= kernel_scale
+            convolved = (_xp.fft.ifftn(fftmult).real).get()
+        else:
+            convolved = _as_convolve_fft(
+                image, kernel, normalize_kernel=normalize_kernel, **kwargs
+            )
+    # for extra safety
+    except Exception as e:
+        print("Falling back to CPU convolution due to:", e)
+        convolved = _as_convolve_fft(
+            image, kernel, normalize_kernel=normalize_kernel, **kwargs
+        )
+    return convolved
