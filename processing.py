@@ -38,6 +38,26 @@ def ipd_gof_harmonic(
     return gof_amplitude, gof_phase
 
 
+def ipd_frac_multipeak(
+    cube: _ut.PSFData, threshold: float = 0.4, show: bool = False
+) -> float:
+    """
+    Calculate the fraction of PSFs in the observed cube that have multiple peaks above a certain threshold.
+    """
+    maxs = []
+    for img in cube:
+        maxs.append(find_local_maxima(img, which='al', threshold=threshold))
+    mcounter = 0
+    for maxima in maxs:
+        if len(maxima) > 1:
+            mcounter += 1
+            continue
+    ipd_frac_multipeak = mcounter / len(cube)
+    if show:
+        _ut.create_interactive_psf_plot(cube)
+    return ipd_frac_multipeak
+
+
 def get_chi_phi(
     observed_cube: _ut.PSFData, calibrated_psf: _ut.PSFData, errors: _xt.Array = None, ddof: int = 0
 ) -> tuple[_xt.Array, _xt.Array]:
@@ -65,9 +85,10 @@ def _reduced_chi_squared(
     """
     Calculate the reduced chi-squared statistic.
     """
-    if errors is None:
-        errors = _xp.np.ones_like(observed)
-    chi_squared = _xp.np.sum(((observed - expected) / errors) ** 2)
+    with _xp.NumpyContext() as np:
+        if errors is None:
+            errors = np.ones_like(observed)
+        chi_squared = np.sum(((observed - expected) / errors) ** 2)
     return chi_squared / (len(observed) - ddof)
 
 
@@ -91,7 +112,7 @@ def find_local_maxima(psf: _xt.Array | _ut.PSFData, which: str = 'al', threshold
     Returns
     -------
     _xt.Array
-        An array of (y, x) coordinates of the local maxima found in the PSF.
+        An array of (x, value), where `x` is the pixel coordinate of the maxima and `value` its value.
     """
     if isinstance(psf, _ut.PSFData):
         if which == 'al':

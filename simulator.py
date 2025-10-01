@@ -1,5 +1,5 @@
 import os, gc, xupy as xp
-_np = xp.np
+import numpy as _np
 from instruments import CCD
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
@@ -140,16 +140,31 @@ class BinarySystem:
             self.transit(), desc=f"[{tn}] Observing...", unit="images", total=N
         ):
             phi = self.compute_scan_angle(img)
-            h1['PHI'] = (phi.value, 'Position angle of companion star [deg]')
-            h2['PHI'] = (phi.value, 'Position angle of companion star [deg]')
-            convolved = _p.convolve_fft(
+            h1['PHI'] = (phi, 'Position angle of companion star [deg]')
+            h2['PHI'] = (phi, 'Position angle of companion star [deg]')
+            convolved = convolve_fft(
                 img, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True)
             
             # Add Poisson noise and Readout Noise to the convolved image
             # noisy = _np.random.poisson(convolved).astype(_np.float32)
             # noisy += _np.random.normal(0, 5, size=noisy.shape)  # readout noise
             
-            final = ccd.sample_psf(psf=convolved)
+            psf_2d, _,_ = ccd.sample_psf(psf=convolved)
+            if self.distance >450:
+                if phi < 30. or phi >= 330.:
+                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1]//4,0), (1,0))
+                elif 30. <= phi < 60. or 300. <= phi < 330.:
+                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1]//6,0), (1,0))
+                elif 60. <= phi < 90. or 270. <= phi < 300.:
+                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1]//8,0), (1,0))
+                elif 90. <= phi < 120. or 240. <= phi < 270.:
+                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//4, 0), (0,1))
+                elif 120. <= phi < 150. or 210. <= phi < 240.:
+                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//6, 0), (0,1))
+                elif 150. <= phi < 210.:
+                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//8, 0), (0,1))
+            psf_x, psf_y = computeXandYpsf(psf=psf_2d)
+            final = (psf_2d, psf_x, psf_y)
             hdul = fits.HDUList()
             hdul.append(fits.PrimaryHDU(final[0], header=h1))
             hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
@@ -255,7 +270,7 @@ class BinarySystem:
         Returns
         -------
         _u.Quantity
-            The scan angle in radians.
+            The scan angle in degrees.
         """
         y, x = xp.np.where(img != 0)
         xc,yc = self._base_map.shape[1]//2, self._base_map.shape[0]//2
@@ -275,7 +290,7 @@ class BinarySystem:
         dx = xi - xc
         dy = yi - yc
         phi = (xp.np.arctan2(dy, dx)) % (2 * xp.np.pi) * _u.rad
-        return phi.to(_u.deg)
+        return phi.to_value(_u.deg)
 
     def _create_base_map(self):
         """

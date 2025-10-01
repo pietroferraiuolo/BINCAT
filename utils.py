@@ -17,7 +17,8 @@ __all__ = [
     "newtn",
     "Logger",
     "fits",
-    'convolve_fft'
+    'convolve_fft',
+    'computeXandYpsf',
 ]
 
 ##############
@@ -473,6 +474,13 @@ def display_psf(
     except Exception as e:
         _l.log(e, level="ERROR")
         raise (e)
+    norm = ImageNormalize(
+        vmin=_xp.np.nanmin(psf),
+        vmax=_xp.np.nanmax(psf),
+        stretch=LogStretch(500),
+        interval=MinMaxInterval(),
+    )
+    normal = kwargs.pop("norm", norm)
     if mode == "all":
 
         fig = _plt.figure(figsize=(8, 4))
@@ -493,7 +501,7 @@ def display_psf(
 
         ax1 = _plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=1)
         ax1.imshow(
-            psf, cmap=cmap, aspect=aspect, extent=extent, origin=origin, **kwargs
+            psf, cmap=cmap, aspect=aspect, extent=extent, origin=origin, norm=norm, **kwargs
         )
         ax1.axis("off")  # to hide axes
 
@@ -546,13 +554,6 @@ def display_psf(
         aspect = kwargs.pop("aspect", "auto")
         origin = kwargs.pop("origin", "lower")
 
-        norm = ImageNormalize(
-            vmin=_xp.np.nanmin(psf),
-            vmax=_xp.np.nanmax(psf),
-            stretch=LogStretch(500),
-            interval=MinMaxInterval(),
-        )
-        normal = kwargs.pop("norm", norm)
         fig = _plt.figure()
         _plt.imshow(
             psf,
@@ -586,6 +587,50 @@ def display_psf(
             raise ValueError("Invalid mode. Use `all`, '2d', 'x', or 'y'.")
     _plt.show()
     return fig
+
+
+def create_interactive_psf_plot(cube):
+    """
+    Creates an interactive plot with a slider to navigate PSF data.
+    - cube: List or array of PSF data objects (e.g., from ut.load_psf_cube).
+    
+    In astrophysics context: Useful for visualizing PSF local maxima across orbital phases,
+    helping identify multi-peak structures indicative of binaries (e.g., via harmonic decomposition).
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.widgets import Slider
+    from processing import find_local_maxima
+    
+    plt.switch_backend('TkAgg')
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plt.subplots_adjust(bottom=0.25)  # Space for slider
+    
+    # Initial plot
+    index = 0
+    maxima = find_local_maxima(cube[index], which='al', show=False)
+    line_psf, = ax.plot(cube[index].psf_x, label='PSF')
+    scat_maxima = ax.scatter(*zip(*maxima), color='red', label='Maxima')
+    ax.legend()
+    ax.set_title(r'Local Maxima in PSF | $\varphi$=' + f"{cube[index].phi:.2f}")
+    ax.set_xlabel('Pixel')
+    ax.set_ylabel('Intensity')
+    ax.grid(True)
+    
+    # Slider axis
+    ax_slider = plt.axes([0.2, 0.1, 0.65, 0.03])  # Position: [left, bottom, width, height]
+    slider = Slider(ax_slider, 'Data Index', 0, len(cube)-1, valinit=0, valstep=1)
+    
+    def update(val):
+        index = int(slider.val)
+        maxima = find_local_maxima(cube[index], which='al', show=False)
+        line_psf.set_ydata(cube[index].psf_x)  # Update PSF line (assuming psf_x is the data)
+        scat_maxima.set_offsets(maxima)  # Update scatter points
+        ax.set_title(r'Local Maxima in PSF | $\varphi$=' + f"{cube[index].phi:.2f}")
+        fig.canvas.draw_idle()
+    
+    slider.on_changed(update)
+    plt.show()
 
 
 def computeXandYpsf(
