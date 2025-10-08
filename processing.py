@@ -18,23 +18,34 @@ def ipd_gof_harmonic(
     """
     Calculate the goodness-of-fit statistic based on harmonic mean.
     """
-    chiphi = get_chi_phi(observed_cube, calibrated_psf, errors=errors, ddof=ddof)
+    with _xp.NumpyContext() as np:
+        chiphi = get_chi_phi(observed_cube, calibrated_psf, errors=errors, ddof=ddof)
 
-    def harmonic_decomposition(x: float, c0: float, c2: float, s2: float) -> float:
-        x = x * _u.deg.to(_u.rad)
-        return c0 + c2*_xp.np.cos(2*x) + s2*_xp.np.sin(2*x)
+        def harmonic_decomposition(x: float, c0: float, c2: float, s2: float) -> float:
+            x = x * _u.deg.to(_u.rad)
+            return c0 + c2*np.cos(2*x) + s2*np.sin(2*x)
 
-    fit = fit_data_points(
-        data = _xp.np.log(chiphi[:,0]), 
-        x_data = chiphi[:,1], 
-        method = harmonic_decomposition
-    )
-    _, c2, s2 = fit.coeffs
-    gof_amplitude = _xp.np.sqrt(c2**2 + s2**2)
-    gof_phase = _xp.np.arctan2(s2, c2) * _u.rad.to(_u.deg)
+        fit = fit_data_points(
+            data = np.log(chiphi[:,0]),
+            x_data = chiphi[:,1], 
+            method = harmonic_decomposition
+        )
+        _, c2, s2 = fit.coeffs
+        gof_amplitude = np.sqrt(c2**2 + s2**2)
+        gof_phase = np.arctan2(s2, c2) * _u.rad.to(_u.deg)
     if show:
         from grasp import plots
-        plots.regressionPlot(fit, f_type='datapoint', title=f'GoF: amp={gof_amplitude:.1e} | phase={gof_phase:.2f} deg')
+        _plt.ion()
+        fig, fax, _ = plots.regressionPlot(
+            fit, 
+            f_type='datapoint', 
+            title=r'$A_{ipd}$'+f'={gof_amplitude:.1e}   |   '+r'$\varphi_{ipd}$'+f'={gof_phase:.2f} deg', 
+            xlabel=r'Scan Angle $\varphi$'
+        )
+        label = plots._kde_labels(fit.kind, fit.coeffs)
+        label = label.replace('Custom', 'Harmonic').replace('A', 'c_0').replace('B', 'c_2').replace('C', 's_2')
+        fax.legend([fax.lines[0]], [label], loc='best', fontsize='medium')
+        fig.show()
     return gof_amplitude, gof_phase
 
 
@@ -80,7 +91,7 @@ def get_chi_phi(
 
 
 def _reduced_chi_squared(
-    observed: _xt.Array, expected: _xt.Array, errors: _xt.Array = None, ddof: int = 0
+    observed: _xt.Array, expected: _xt.Array, errors: _xt.Optional[_xt.Array] = None, ddof: int = 0
 ) -> float:
     """
     Calculate the reduced chi-squared statistic.

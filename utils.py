@@ -449,6 +449,7 @@ from astropy.visualization import (
 def display_psf(
     psf: _xt.Optional[_xt.ArrayLike] = None,
     mode: str = "all",
+    save: str = 'psf',
     **kwargs: dict[str, _xt.Any],
 ) -> None:
     """Display the PSF of the Gaia telescope.
@@ -481,9 +482,10 @@ def display_psf(
         interval=MinMaxInterval(),
     )
     normal = kwargs.pop("norm", norm)
+    figsize = kwargs.pop('figsize', None)
     if mode == "all":
-
-        fig = _plt.figure(figsize=(8, 4))
+        fz = (8,4) if figsize is None else figsize
+        fig = _plt.figure(figsize=fz)
 
         # Left: imshow (spans full height, 1/3 width)
         cmap = kwargs.pop("cmap", "gist_heat")
@@ -517,6 +519,7 @@ def display_psf(
         )
         ax2.yaxis.set_label_position("right")
         ax2.yaxis.set_ticks_position("right")
+        ax2.set_xlim(0, psf_x.shape[0]-1)
         ax2.grid(True, linestyle="--", alpha=0.85)
 
         # Right bottom: second plot (bottom half of right, 2/3 width)
@@ -531,6 +534,7 @@ def display_psf(
         )
         ax3.yaxis.set_label_position("right")
         ax3.yaxis.set_ticks_position("right")
+        ax3.set_xlim(0, psf_y.shape[0]-1)
         ax3.grid(True, linestyle="--", alpha=0.85)
 
         fig.suptitle(
@@ -541,6 +545,7 @@ def display_psf(
         _plt.tight_layout()
         _plt.show()
     elif mode == "2d":
+        title = kwargs.pop('title', 'PSF')
         cmap = kwargs.pop("cmap", "gist_heat")
         extent = kwargs.pop(
             "extent",
@@ -554,7 +559,7 @@ def display_psf(
         aspect = kwargs.pop("aspect", "auto")
         origin = kwargs.pop("origin", "lower")
 
-        fig = _plt.figure()
+        fig = _plt.figure(figsize=figsize)
         _plt.imshow(
             psf,
             origin=origin,
@@ -565,11 +570,11 @@ def display_psf(
             **kwargs,
         )
         _plt.colorbar()
-        _plt.title("CCD PSF")
-        _plt.xlabel("AL [px]")
-        _plt.ylabel("AC [px]")
+        _plt.title(title, fontdict={'size':14, 'weight':'semibold'})
+        _plt.xlabel("AL [mas]")
+        _plt.ylabel("AC [mas]")
     else:
-        fig = _plt.figure()
+        fig = _plt.figure(figsize=figsize)
         _plt.ylabel("Normalized PSF")
         _plt.grid(linestyle="--")
         y = _xp.np.arange(len(psf_y)) - len(psf_y) // 2
@@ -578,14 +583,21 @@ def display_psf(
         if mode == "x":
             _plt.plot(x, psf_x)
             _plt.xlabel("AL [px]")
+            _plt.xlim(x.min(), x.max())
             _plt.xticks(_xp.np.arange(int(x.min()), int(x.max()) + 1))
         elif mode == "y":
             _plt.plot(y, psf_y)
             _plt.xlabel("AC [px]")
+            _plt.xlim(y.min(), y.max())
             _plt.xticks(_xp.np.arange(int(y.min()), int(y.max()) + 1))
         else:
             raise ValueError("Invalid mode. Use `all`, '2d', 'x', or 'y'.")
     _plt.show()
+    if save:
+        save, ext = _os.path.splitext(save)
+        if ext == '':
+            ext = '.svg'
+        fig.savefig(f"{save}{ext}", transparent=True, dpi=450)
     return fig
 
 

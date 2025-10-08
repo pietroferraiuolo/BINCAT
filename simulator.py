@@ -145,9 +145,8 @@ class BinarySystem:
             convolved = convolve_fft(
                 img, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True)
             
-            # Add Poisson noise and Readout Noise to the convolved image
+            # Add Poisson noise to the convolved image
             # noisy = _np.random.poisson(convolved).astype(_np.float32)
-            # noisy += _np.random.normal(0, 5, size=noisy.shape)  # readout noise
             
             psf_2d, _,_ = ccd.sample_psf(psf=convolved)
             if self.distance >450:
@@ -163,6 +162,12 @@ class BinarySystem:
                     psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//6, 0), (0,1))
                 elif 150. <= phi < 210.:
                     psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//8, 0), (0,1))
+                    
+            # ---- Read-Out Noise ---- #
+            ron = _np.random.normal(0, _np.random.randint(2,6), size=psf_2d.shape)*0.5
+            ron[ron<0] = 0
+            psf_2d += ron
+            
             psf_x, psf_y = computeXandYpsf(psf=psf_2d)
             final = (psf_2d, psf_x, psf_y)
             hdul = fits.HDUList()
