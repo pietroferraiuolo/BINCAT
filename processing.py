@@ -1,8 +1,7 @@
 import xupy as _xp
-from xupy import typings as _xt
-import scipy.signal as _ss
 import utils as _ut
 import astropy.units as _u
+from xupy import typings as _xt
 from skimage.transform import resize
 from matplotlib import pyplot as _plt
 from grasp.stats import fit_data_points
@@ -42,7 +41,7 @@ def ipd_gof_harmonic(
             title=r'$A_{ipd}$'+f'={gof_amplitude:.1e}   |   '+r'$\varphi_{ipd}$'+f'={gof_phase:.2f} deg', 
             xlabel=r'Scan Angle $\varphi$'
         )
-        label = plots._kde_labels(fit.kind, fit.coeffs)
+        label = plots._kde_labels(fit.kind, fit.coeffs) # type: ignore
         label = label.replace('Custom', 'Harmonic').replace('A', 'c_0').replace('B', 'c_2').replace('C', 's_2')
         fax.legend([fax.lines[0]], [label], loc='best', fontsize='medium')
         fig.show()

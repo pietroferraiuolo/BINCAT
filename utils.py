@@ -786,7 +786,7 @@ def convolve_fft(
     Raises
     ------
     RuntimeError
-        If GPU is not available.
+        If kernel can't be normalized.
     """
     try:
         if _xp.on_gpu:

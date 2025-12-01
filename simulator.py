@@ -149,7 +149,7 @@ class BinarySystem:
             # noisy = _np.random.poisson(convolved).astype(_np.float32)
             
             psf_2d, _,_ = ccd.sample_psf(psf=convolved)
-            if self.distance >450:
+            if self.distance > 450:
                 if phi < 30. or phi >= 330.:
                     psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1]//4,0), (1,0))
                 elif 30. <= phi < 60. or 300. <= phi < 330.:
