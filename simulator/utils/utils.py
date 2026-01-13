@@ -291,9 +291,10 @@ def timer(func: callable) -> callable:
         start_time = _time.perf_counter()
         result = func(*args, **kwargs)
         end_time = _time.perf_counter()
-        h = (end_time - start_time) // 3600
-        m = (end_time - start_time) % 3600 // 60
-        s = (end_time - start_time) % 60
+        t = end_time - start_time
+        h = t // 3600
+        m = t % 3600 // 60
+        s = t % 60
         print(f"Execution time: {int(h):02d}:{int(m):02d}:{s:.2f} (h:m:s)")
         return result
 
