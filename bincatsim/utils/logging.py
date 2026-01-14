@@ -7,26 +7,28 @@ Taken from OPTICALIB v1.1.0  (@ Pietro Ferraiuolo - pietro.ferraiuolo@inaf.it)
 import logging as _l
 import logging.handlers as _lh
 
-class SystemLogger():
+
+class SystemLogger:
     """
     A class to manage the system logger instance.
     """
+
     def __init__(self, the_class: type | None = None):
         """
         Initializes the SystemLogger instance.
-        
+
         Parameters
         ----------
         the_class : type, optional
-            The class this instance of SystemLogger is associated with. If provided, 
-            as `__class__`, the class name will be included in the log messages. 
-            
+            The class this instance of SystemLogger is associated with. If provided,
+            as `__class__`, the class name will be included in the log messages.
+
             The default is None.
         """
         self.logger = SystemLogger.getSystemLogger()
         self.the_class = the_class
 
-    def log(self, **kwargs: dict[str,str]) -> None:
+    def log(self, **kwargs: dict[str, str]) -> None:
         """
         Logs a message using the system logger.
 
@@ -114,8 +116,11 @@ class SystemLogger():
             The root logger instance.
         """
         return set_up_logger(
-            "system.log", logging_level=_l.INFO, format="%(asctime)s -- [%(levelname)s] -- %(message)s"
+            "system.log",
+            logging_level=_l.INFO,
+            format="%(asctime)s -- [%(levelname)s] -- %(message)s",
         )
+
 
 def set_up_logger(
     filename: str, logging_level: int = _l.DEBUG, format: str | None = None
@@ -151,9 +156,9 @@ def set_up_logger(
         set_up_logger('/path/to/logfile.log', logging.DEBUG)
     """
     import os
-    from ..core.root import LOGGING_ROOT_FOLDER
+    from ..core.root import BASE_DATA_PATH
 
-    file_path = os.path.join(LOGGING_ROOT_FOLDER, filename)
+    file_path = os.path.join(BASE_DATA_PATH, filename)
     if format is not None:
         FORMAT = format
     else:
@@ -170,7 +175,10 @@ def set_up_logger(
     handler.doRollover()
     return root_logger
 
-def log(logger: _l.Logger, message: str, the_class: type | None = None, level: str = "INFO") -> None:
+
+def log(
+    logger: _l.Logger, message: str, the_class: type | None = None, level: str = "INFO"
+) -> None:
     """
     Log a message at the specified level.
 
@@ -181,7 +189,7 @@ def log(logger: _l.Logger, message: str, the_class: type | None = None, level: s
     message : str
         The message to log.
     the_class : type, optional
-        The class from which the log is being made. If provided, as `__class__`, 
+        The class from which the log is being made. If provided, as `__class__`,
         the class name will be included in the log message. The default is None.
     level : str, optional
         The logging level to use for the message. This should be one of the

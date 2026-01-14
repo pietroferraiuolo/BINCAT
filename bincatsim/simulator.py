@@ -1,17 +1,18 @@
-import os, gc, xupy as xp
+import os
+import gc
+import xupy as xp
 import numpy as _np
-from instruments import CCD
+from .utils import *
+import astropy.units as _u
+from astropy.io import fits
+from .instruments import CCD
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
-import astropy.units as _u
-from utils import *
-from utils import _header_from_dict as hfd
-import processing as _p
+from .utils.logging import SystemLogger as _SL
+from opticalib.ground.osutils import _header_from_dict as hfd
 
-_l = Logger()
-basepath = os.path.dirname(os.path.abspath(__file__))
 
-class BinarySystem:
+class GaiaSimulator:
     """
     Class to simulate a binary star system.
 
@@ -25,6 +26,8 @@ class BinarySystem:
         Magnitude of the secondary star.
     distance : float or astropy.units.Quantity
         Angular separation between the two stars in milliarcseconds (mas).
+    angle : float or astropy.units.Quantity, optional
+        Total angle to cover in the simulation in degrees. Default is 360 degrees.
 
     Attributes
     ----------
@@ -52,51 +55,76 @@ class BinarySystem:
         ccd: CCD,
         M1: float,
         M2: float,
-        distance: float|_u.Quantity,
-        angle: float|_u.Quantity = 360.,
-        **kwargs: dict[str, _xt.Any],
+        distance: float | _u.Quantity,
+        angle: float | _u.Quantity = 360.0,
     ):
         """The constructor"""
+        self._logger = _SL(__class__)
+
         self.ccd = ccd
+
         self.map_shape = self.ccd.psf.shape
-        self.angle = angle * _u.deg if not isinstance(angle, _u.Quantity) else angle.to(_u.deg)
+        self._logger.info(f"Binary System map shape set to {self.map_shape} pixels.")
+
+        self.angle = (
+            angle * _u.deg if not isinstance(angle, _u.Quantity) else angle.to(_u.deg)
+        )
+        self._logger.info(f"Configurations spanning 0-{self.angle} degrees.")
+
         if not isinstance(distance, _u.Quantity):
             self.distance = distance * _u.mas  # assuming input is in mas
         else:
             if distance.unit != _u.mas:
                 self.distance = distance.to(_u.mas)
         self.distance = int(self.distance.value)  # mas
+        self._logger.info(f"Angular separation set to {self.distance} mas.")
+
         if any([s < 2 * self.distance for s in list(self.map_shape)]):
             raise ValueError(
                 f"Map shape must be larger than twice the distance of the binary system: {self.map_shape} < {2*self.distance*2}"
             )
+
         self.M2 = M2
         self.M1 = M1
-        self._Mtot = -2.5 * _np.log10(10**(-0.4 * M1) + 10**(-0.4 * M2))
+        self._logger.info(f"Central star magnitude: {self.M1} mag.")
+        self._logger.info(f"Companion star magnitude: {self.M2} mag.")
+
+        self._Mtot = -2.5 * _np.log10(10 ** (-0.4 * M1) + 10 ** (-0.4 * M2))
+        self._logger.info(
+            f"Calibration G-Magnitude of the single source: {self._Mtot} mag."
+        )
+
         self.is_observed = False
         self._bands = self.ccd._bands
+
         G = self._Mtot
+
         if G < 13:
             idx = 0
         elif 13 <= G < 16:
             idx = 1
         else:
             idx = 2
+
         if not eval(self.ccd._wc_conditions[idx].format(G=G)):
-            raise ValueError(
-            f"Something's wrong..."
-            )
+            raise ValueError(f"Something's wrong...")
+
         del G
-        self.collecting_area = self.ccd.WC[idx]['area_um']
+
+        self.collecting_area = self.ccd.WC[idx]["area_um"]
         self.t_int = self.ccd.tdi
-        self.comp_star_flux = self._compute_star_flux(
-            self.M2, collecting_area=self.collecting_area, integration_time=self.t_int
-        )
+
         self.central_star_flux = self._compute_star_flux(
             self.M1, collecting_area=self.collecting_area, integration_time=self.t_int
         )
-        self._base_map = self._create_base_map()
+        self._logger.info(f"Central star flux: {self.central_star_flux} photons/s/cm².")
 
+        self.comp_star_flux = self._compute_star_flux(
+            self.M2, collecting_area=self.collecting_area, integration_time=self.t_int
+        )
+        self._logger.info(f"Companion star flux: {self.comp_star_flux} photons/s/cm².")
+
+        self._base_map = self._create_base_map()
 
     def observe(self, ccd: CCD, map_dtype: str = "float32") -> str:
         """
@@ -113,94 +141,130 @@ class BinarySystem:
         ccd : CCD
             The CCD to use for the observation.
         """
-        tn = newtn()
         N = self._create_ring(radius=self.distance).sum()
-        datapath = os.path.join(
-            basepath, "data", "simulations", "observations", f"{tn}"
-        )
-        if not os.path.exists(datapath):
-            os.makedirs(datapath, exist_ok=True)
-        _l.log("Starting convolution computation on binary system...", level="INFO")
-        _l.log(f"Data Tracking Number : {tn}", level="INFO")
+        datapath = create_data_folder()
+        tn = datapath.split("/")[-1]
+        self._logger.info("Starting binary star observations...")
+        self._logger.info(f"Data Tracking Number : {tn}")
+
         from tqdm import tqdm
 
-        i = 0
         header = self._prepare_main_header()
-        header['PIXELSCL'] = (self.ccd.header['PIXELSCL'], 'Pixel scale [mas/pixel]')
+        header["PIXELSCL"] = (self.ccd.header["PIXELSCL"], "Pixel scale [mas/pixel]")
         imgHeader = self._prepare_main_header()
-        imgHeader['PXSCLREB'] = (self.ccd.pxscale_factor, 'Pxscale rebin ratio (y/x)')
-        imgHeader['PXSCLXRB'] = (self.ccd.pxscale_x.value, 'Rebinned pxscale_x [mas/pixel]')
-        imgHeader['PXSCLYRB'] = (self.ccd.pxscale_y.value, 'Rebinned pxscale_y [mas/pixel]')
-        assert ccd.psf.shape == self._base_map.shape, "PSF and map shapes do not match."
+        imgHeader["PXSCLREB"] = (self.ccd.pxscale_factor, "Pxscale rebin ratio (y/x)")
+        imgHeader["PXSCLXRB"] = (
+            self.ccd.pxscale_x.value,
+            "Rebinned pxscale_x [mas/pixel]",
+        )
+        imgHeader["PXSCLYRB"] = (
+            self.ccd.pxscale_y.value,
+            "Rebinned pxscale_y [mas/pixel]",
+        )
+
+        if not ccd.psf.shape == self._base_map.shape:
+            self._logger.error("CCD PSF shape does not match binary map shape.")
+            raise ValueError(
+                f"CCD PSF shape {ccd.psf.shape} does not match binary map shape {self._base_map.shape}."
+            )
+
         h2 = hfd(header)
         h1 = hfd(imgHeader)
         mdtype = xp.float if map_dtype == "float32" else xp.double
-        
+
+        i = 0
         for img in tqdm(
             self.transit(), desc=f"[{tn}] Observing...", unit="images", total=N
         ):
             phi = self.compute_scan_angle(img)
-            h1['PHI'] = (phi, 'Position angle of companion star [deg]')
-            h2['PHI'] = (phi, 'Position angle of companion star [deg]')
+            h1["PHI"] = (phi, "Position angle of companion star [deg]")
+            h2["PHI"] = (phi, "Position angle of companion star [deg]")
+
+            # ---- Convolution ---- #
             convolved = convolve_fft(
-                img, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True)
-            
+                img, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True
+            )
+            self._logger.info(
+                f"Image {i:04d}: Convolution complete at angle {phi:.2f} degrees."
+            )
+
             # Add Poisson noise to the convolved image
             # noisy = _np.random.poisson(convolved).astype(_np.float32)
-            
-            psf_2d, _,_ = ccd.sample_psf(psf=convolved)
+            # self._logger.info(f"Image {i:04d}: photon shot noise added.")
+
+            psf_2d, _, _ = ccd.sample_psf(psf=convolved)
+            self._logger.info(f"Image {i:04d}: PSF read-out complete (binning).")
+
+            self._logger.debug(
+                f"Image {i:04d}: shifting map based on sources distance."
+            )
             if self.distance > 450:
-                if phi < 30. or phi >= 330.:
-                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1]//4,0), (1,0))
-                elif 30. <= phi < 60. or 300. <= phi < 330.:
-                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1]//6,0), (1,0))
-                elif 60. <= phi < 90. or 270. <= phi < 300.:
-                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1]//8,0), (1,0))
-                elif 90. <= phi < 120. or 240. <= phi < 270.:
-                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//4, 0), (0,1))
-                elif 120. <= phi < 150. or 210. <= phi < 240.:
-                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//6, 0), (0,1))
-                elif 150. <= phi < 210.:
-                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1]//8, 0), (0,1))
-                    
+                if phi < 30.0 or phi >= 330.0:
+                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1] // 4, 0), (1, 0))
+                elif 30.0 <= phi < 60.0 or 300.0 <= phi < 330.0:
+                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1] // 6, 0), (1, 0))
+                elif 60.0 <= phi < 90.0 or 270.0 <= phi < 300.0:
+                    psf_2d = _np.roll(psf_2d, (-psf_2d.shape[1] // 8, 0), (1, 0))
+                elif 90.0 <= phi < 120.0 or 240.0 <= phi < 270.0:
+                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1] // 4, 0), (0, 1))
+                elif 120.0 <= phi < 150.0 or 210.0 <= phi < 240.0:
+                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1] // 6, 0), (0, 1))
+                elif 150.0 <= phi < 210.0:
+                    psf_2d = _np.roll(psf_2d, (psf_2d.shape[1] // 8, 0), (0, 1))
+
             # ---- Read-Out Noise ---- #
-            ron = _np.random.normal(0, _np.random.randint(2,6), size=psf_2d.shape)*0.5
-            ron[ron<0] = 0
+            ron = (
+                _np.random.normal(0, _np.random.randint(2, 6), size=psf_2d.shape) * 0.5
+            )
+            ron[ron < 0] = 0
             psf_2d += ron
-            
+            self._logger.info(f"Image {i:04d}: read-out noise added.")
+
             psf_x, psf_y = computeXandYpsf(psf=psf_2d)
+            self._logger.info(f"Image {i:04d}: PSF X and Y computed.")
             final = (psf_2d, psf_x, psf_y)
+
             hdul = fits.HDUList()
             hdul.append(fits.PrimaryHDU(final[0], header=h1))
             hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
             hdul.append(fits.ImageHDU(final[2], name="PSF_Y"))
             hdul.append(fits.ImageHDU(convolved, name="HighRes obs", header=h2))
             hdul.writeto(os.path.join(datapath, f"{i:04d}.fits"), overwrite=True)
+            self._logger.info(f"Image {i:04d}: FITS file saved.")
             del convolved, final
             gc.collect()
+
             i += 1
-        
+
         # Computing reference PSF for fitting purposes
         base_source = self._base_map.copy()
         base_source[_np.where(base_source != 0)] = self._Mtot
+        self._logger.info("Computing reference PSF for fitting purposes.")
         convolved = convolve_fft(
-            base_source, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True)
+            base_source, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True
+        )
         final = ccd.sample_psf(psf=convolved)
+
         hdul = fits.HDUList()
-        for k in ["M1", "M2", "DISTMAS", 'PHI']:
+        for k in ["M1", "M2", "DISTMAS", "PHI"]:
             h1.pop(k)
             h2.pop(k)
-        h1['GMAG'] = (self._Mtot, 'Calibration G-Magnitude of the expected source')
-        h2['GMAG'] = (self._Mtot, 'Calibration G-Magnitude of the expected source')
+        h1["GMAG"] = (self._Mtot, "Calibration G-Magnitude of the expected source")
+        h2["GMAG"] = (self._Mtot, "Calibration G-Magnitude of the expected source")
+
         hdul.append(fits.PrimaryHDU(final[0], header=h1))
         hdul.append(fits.ImageHDU(final[1], name="PSF_AL"))
         hdul.append(fits.ImageHDU(final[2], name="PSF_AC"))
         hdul.append(fits.ImageHDU(convolved, name="HighRes Calib", header=h2))
         hdul.writeto(os.path.join(datapath, f"calibration.fits"), overwrite=True)
+        self._logger.info("Calibration FITS file saved.")
+
         del convolved, final
         gc.collect()
-        _l.log("Convolution complete.", level="INFO")
+
+        self._logger.info("Observation complete.")
         self.is_observed = True
+
         return tn
 
     def show_system(self, out: bool = False, **kwargs: dict[str, _xt.Any]) -> None:
@@ -262,7 +326,7 @@ class BinarySystem:
         x, y = _np.where(ring == 1)
         for i, j in zip(x, y):
             yield (i, j)
-    
+
     def compute_scan_angle(self, img: _xt.Array) -> _u.Quantity:
         """
         Compute the scan angle of the binary system from a given image.
@@ -278,16 +342,16 @@ class BinarySystem:
             The scan angle in degrees.
         """
         y, x = xp.np.where(img != 0)
-        xc,yc = self._base_map.shape[1]//2, self._base_map.shape[0]//2
+        xc, yc = self._base_map.shape[1] // 2, self._base_map.shape[0] // 2
         xi = [k for k in x if k != xc]
         yi = [k for k in y if k != yc]
-        if len(xi) == 0 and len (yi) > 0:
+        if len(xi) == 0 and len(yi) > 0:
             xi = xc
             yi = yi[0]
-        elif len(yi) == 0 and len (xi) > 0:
+        elif len(yi) == 0 and len(xi) > 0:
             yi = yc
             xi = xi[0]
-        elif len(yi) == 0 and len (xi) == 0:
+        elif len(yi) == 0 and len(xi) == 0:
             raise ValueError("Something's wrong with the binary map")
         else:
             xi = xi[0]
@@ -305,8 +369,8 @@ class BinarySystem:
         center = (self.map_shape[0] // 2, self.map_shape[1] // 2)
         _map = _np.zeros(self.map_shape, dtype=_np.float64)
         _map[center] += self.central_star_flux
+        self._logger.info("Base map with central star created.")
         return _map
-
 
     def _prepare_main_header(self):
         """
@@ -317,11 +381,16 @@ class BinarySystem:
         header["M1"] = (self.M1, "Magnitude of the primary (central) star")
         header["M2"] = (self.M2, "Magnitude of the secondary (companion) star")
         header["BAND"] = (self._bands["band"][0], "Photometric band")
-        header["WAVELEN"] = (self._bands["wavelength"][0].to_value(_u.nm), "Effective wavelength in nm")
+        header["WAVELEN"] = (
+            self._bands["wavelength"][0].to_value(_u.nm),
+            "Effective wavelength in nm",
+        )
         header["ZP"] = (self._bands["zero_point"][0].value, "Zero point in Jy")
-        header["BANDWID"] = (self._bands["bandwidth"][0].to_value(_u.nm), "Bandwidth in nm")
+        header["BANDWID"] = (
+            self._bands["bandwidth"][0].to_value(_u.nm),
+            "Bandwidth in nm",
+        )
         return header
-
 
     def _compute_star_flux(
         self,
@@ -414,7 +483,7 @@ class BinarySystem:
         ring_mask = _np.zeros(shape, dtype=bool)
         ring_mask[outer_disk] = True
         ring_mask[inner_disk] = False  # remove inner disk, leaving only the ring
-        if angle < 360.:
+        if angle < 360.0:
             yc, xc = shape[0] // 2, shape[1] // 2
             theta = _np.deg2rad(angle)
             for y in range(shape[0]):
@@ -446,5 +515,4 @@ class BinarySystem:
        Band: {self._bands['band'][0]}
        Cube shape: {self._cube.shape if hasattr(self, '_cube') else 'Not created yet'}
        Observed: {'Yes' if self.is_observed else 'No'}
-"""
-
+    """

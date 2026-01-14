@@ -1,3 +1,8 @@
+"""
+DEPRECATED
+==========
+"""
+
 import time as _time
 import xupy as _xp, os as _os
 from xupy import typings as _xt
@@ -17,8 +22,8 @@ __all__ = [
     "newtn",
     "Logger",
     "fits",
-    'convolve_fft',
-    'computeXandYpsf',
+    "convolve_fft",
+    "computeXandYpsf",
 ]
 
 ##############
@@ -450,7 +455,7 @@ from astropy.visualization import (
 def display_psf(
     psf: _xt.Optional[_xt.ArrayLike] = None,
     mode: str = "all",
-    save: str = 'psf',
+    save: str = "psf",
     **kwargs: dict[str, _xt.Any],
 ) -> None:
     """Display the PSF of the Gaia telescope.
@@ -483,9 +488,9 @@ def display_psf(
         interval=MinMaxInterval(),
     )
     normal = kwargs.pop("norm", norm)
-    figsize = kwargs.pop('figsize', None)
+    figsize = kwargs.pop("figsize", None)
     if mode == "all":
-        fz = (8,4) if figsize is None else figsize
+        fz = (8, 4) if figsize is None else figsize
         fig = _plt.figure(figsize=fz)
 
         # Left: imshow (spans full height, 1/3 width)
@@ -504,38 +509,34 @@ def display_psf(
 
         ax1 = _plt.subplot2grid((2, 3), (0, 0), rowspan=2, colspan=1)
         ax1.imshow(
-            psf, cmap=cmap, aspect=aspect, extent=extent, origin=origin, norm=norm, **kwargs
+            psf,
+            cmap=cmap,
+            aspect=aspect,
+            extent=extent,
+            origin=origin,
+            norm=norm,
+            **kwargs,
         )
         ax1.axis("off")  # to hide axes
 
         # Right top: first plot (top half of right, 2/3 width)
         ax2 = _plt.subplot2grid((2, 3), (0, 1), rowspan=1, colspan=2)
         ax2.plot(psf_x, linewidth=2, color="tab:red")
-        ax2.set_xticks(
-            _xp.np.arange(0, int(psf_x.shape[0] + 1)),
-            labels=[]
-        )
-        ax2.set_yticks(
-            _xp.np.linspace(0, psf_x.max(), 4)
-        )
+        ax2.set_xticks(_xp.np.arange(0, int(psf_x.shape[0] + 1)), labels=[])
+        ax2.set_yticks(_xp.np.linspace(0, psf_x.max(), 4))
         ax2.yaxis.set_label_position("right")
         ax2.yaxis.set_ticks_position("right")
-        ax2.set_xlim(0, psf_x.shape[0]-1)
+        ax2.set_xlim(0, psf_x.shape[0] - 1)
         ax2.grid(True, linestyle="--", alpha=0.85)
 
         # Right bottom: second plot (bottom half of right, 2/3 width)
         ax3 = _plt.subplot2grid((2, 3), (1, 1), rowspan=1, colspan=2)
         ax3.plot(psf_y, linewidth=2, color="tab:red")
-        ax3.set_xticks(
-            _xp.np.arange(0, int(psf_y.shape[0] + 1)),
-            labels=[]
-        )
-        ax3.set_yticks(
-            _xp.np.linspace(0, psf_y.max(), 4)
-        )
+        ax3.set_xticks(_xp.np.arange(0, int(psf_y.shape[0] + 1)), labels=[])
+        ax3.set_yticks(_xp.np.linspace(0, psf_y.max(), 4))
         ax3.yaxis.set_label_position("right")
         ax3.yaxis.set_ticks_position("right")
-        ax3.set_xlim(0, psf_y.shape[0]-1)
+        ax3.set_xlim(0, psf_y.shape[0] - 1)
         ax3.grid(True, linestyle="--", alpha=0.85)
 
         fig.suptitle(
@@ -546,7 +547,7 @@ def display_psf(
         _plt.tight_layout()
         _plt.show()
     elif mode == "2d":
-        title = kwargs.pop('title', 'PSF')
+        title = kwargs.pop("title", "PSF")
         cmap = kwargs.pop("cmap", "gist_heat")
         extent = kwargs.pop(
             "extent",
@@ -571,7 +572,7 @@ def display_psf(
             **kwargs,
         )
         _plt.colorbar()
-        _plt.title(title, fontdict={'size':14, 'weight':'semibold'})
+        _plt.title(title, fontdict={"size": 14, "weight": "semibold"})
         _plt.xlabel("AL [mas]")
         _plt.ylabel("AC [mas]")
     else:
@@ -596,8 +597,8 @@ def display_psf(
     _plt.show()
     if save:
         save, ext = _os.path.splitext(save)
-        if ext == '':
-            ext = '.svg'
+        if ext == "":
+            ext = ".svg"
         fig.savefig(f"{save}{ext}", transparent=True, dpi=450)
     return fig
 
@@ -606,42 +607,46 @@ def create_interactive_psf_plot(cube):
     """
     Creates an interactive plot with a slider to navigate PSF data.
     - cube: List or array of PSF data objects (e.g., from ut.load_psf_cube).
-    
+
     In astrophysics context: Useful for visualizing PSF local maxima across orbital phases,
     helping identify multi-peak structures indicative of binaries (e.g., via harmonic decomposition).
     """
     import matplotlib.pyplot as plt
     from matplotlib.widgets import Slider
     from processing import find_local_maxima
-    
-    plt.switch_backend('TkAgg')
+
+    plt.switch_backend("TkAgg")
     plt.ion()
     fig, ax = plt.subplots(figsize=(10, 6))
     plt.subplots_adjust(bottom=0.25)  # Space for slider
-    
+
     # Initial plot
     index = 0
-    maxima = find_local_maxima(cube[index], which='al', show=False)
-    line_psf, = ax.plot(cube[index].psf_x, label='PSF')
-    scat_maxima = ax.scatter(*zip(*maxima), color='red', label='Maxima')
+    maxima = find_local_maxima(cube[index], which="al", show=False)
+    (line_psf,) = ax.plot(cube[index].psf_x, label="PSF")
+    scat_maxima = ax.scatter(*zip(*maxima), color="red", label="Maxima")
     ax.legend()
-    ax.set_title(r'Local Maxima in PSF | $\varphi$=' + f"{cube[index].phi:.2f}")
-    ax.set_xlabel('Pixel')
-    ax.set_ylabel('Intensity')
+    ax.set_title(r"Local Maxima in PSF | $\varphi$=" + f"{cube[index].phi:.2f}")
+    ax.set_xlabel("Pixel")
+    ax.set_ylabel("Intensity")
     ax.grid(True)
-    
+
     # Slider axis
-    ax_slider = plt.axes([0.2, 0.1, 0.65, 0.03])  # Position: [left, bottom, width, height]
-    slider = Slider(ax_slider, 'Data Index', 0, len(cube)-1, valinit=0, valstep=1)
-    
+    ax_slider = plt.axes(
+        [0.2, 0.1, 0.65, 0.03]
+    )  # Position: [left, bottom, width, height]
+    slider = Slider(ax_slider, "Data Index", 0, len(cube) - 1, valinit=0, valstep=1)
+
     def update(val):
         index = int(slider.val)
-        maxima = find_local_maxima(cube[index], which='al', show=False)
-        line_psf.set_ydata(cube[index].psf_x)  # Update PSF line (assuming psf_x is the data)
+        maxima = find_local_maxima(cube[index], which="al", show=False)
+        line_psf.set_ydata(
+            cube[index].psf_x
+        )  # Update PSF line (assuming psf_x is the data)
         scat_maxima.set_offsets(maxima)  # Update scatter points
-        ax.set_title(r'Local Maxima in PSF | $\varphi$=' + f"{cube[index].phi:.2f}")
+        ax.set_title(r"Local Maxima in PSF | $\varphi$=" + f"{cube[index].phi:.2f}")
         fig.canvas.draw_idle()
-    
+
     slider.on_changed(update)
     plt.show()
 
@@ -732,11 +737,11 @@ class PSFData:
     @property
     def psf_hr(self):
         return self._psf_hr
-    
+
     @property
     def phi(self):
         try:
-            return self.meta[0]['PHI']
+            return self.meta[0]["PHI"]
         except (KeyError, TypeError):
             raise KeyError("PHI not found in metadata.")
 
@@ -749,11 +754,13 @@ class PSFData:
             arg = f"calibration, G={G:.3f}"
         return f"PSFData({arg})"
 
+
 #########################
 ## COMPUTING UTILITIES ##
 #########################
 
 from astropy.convolution import convolve_fft as _as_convolve_fft
+
 
 def convolve_fft(
     image: _xt.Array,

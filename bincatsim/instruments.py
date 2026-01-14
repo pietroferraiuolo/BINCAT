@@ -1,13 +1,14 @@
-import os,xupy as xp, poppy as _poppy
-_np = xp.np if xp.on_gpu else xp
-import matplotlib.pyplot as _plt
-from xupy import typings as _xt
-from astropy.table import QTable as _qt
+import xupy as xp
+import numpy as _np
+import poppy as _poppy
 import astropy.units as _u
-import utils as _ut
-
-_l = _ut.Logger()
-basepath = os.path.dirname(os.path.abspath(__file__))
+from . import utils as _ut
+from xupy import typings as _xt
+import matplotlib.pyplot as _plt
+from astropy.table import QTable as _qt
+from .utils.psfutils import fits as _fits
+from .utils.logging import SystemLogger as _SL
+from .core.root import BANDS_FILE, PASSBAND_FILE
 
 
 class CCD:
@@ -33,16 +34,18 @@ class CCD:
 
     def __init__(
         self,
-        psf: _xt.Optional[_ut.fits.HDUList | _xt.ArrayLike | str] = None,
+        psf: _xt.Optional[_fits.HDUList | _xt.ArrayLike | str] = None,
         **kwargs: dict[str, _xt.Any],
     ):
         """The constructor"""
+        self._logger = _SL(__class__)
+
         if psf is not None:
-            if isinstance(psf, _ut.fits.HDUList):
+            if isinstance(psf, _fits.HDUList):
                 self._psf = psf
                 self._meta = psf[0].header
             elif isinstance(psf, str):
-                self._psf = _ut.fits.open(psf)
+                self._psf = _fits.open(psf)
                 self._meta = self._psf[0].header
             else:
                 raise TypeError(
@@ -50,6 +53,7 @@ class CCD:
                 )
             self.psf = self._psf[0].data
             self.psf_x, self.psf_y = _ut.computeXandYpsf(self.psf)
+            self._logger.info("PSF Loaded")
         else:
             self._psf = self.psf = None
             self.psf_x = None
@@ -59,13 +63,14 @@ class CCD:
                 """PSF not provided. Use the method 'compute_psf' to compute it, passing a
 `poppy` optical system."""
             )
-        self._bands = _qt.read("data/bands.fits")
+
+        self._bands = _qt.read(BANDS_FILE)
         self._bands = self._bands[self._bands["band"] == kwargs.get("band", "Gaia_G")]
-        self._passbands = _qt.read("data/gaiaDR3passband.fits")
+        self._passbands = _qt.read(PASSBAND_FILE)
         self.pixel_area = kwargs.get("pixel_area", 10 * 30 * _u.um**2)
         self.ccd_pixels = kwargs.get("ccd_pixels", [4500 * _u.pixel, 1966 * _u.pixel])
         self.pxscale_x = kwargs.get("pixel_scale_x", 59 * _u.mas / _u.pixel)
-        self.pxscale_y = kwargs.get("pixel_scale_y", 177 *_u.mas / _u.pixel)
+        self.pxscale_y = kwargs.get("pixel_scale_y", 177 * _u.mas / _u.pixel)
         self.pxscale_factor = (self.pxscale_y / self.pxscale_x).value
         self.tdi = kwargs.get("t_integration", 4.42 * _u.s)
         self.rebinned = False
@@ -86,7 +91,7 @@ class CCD:
         self._wc_conditions = ["{G}<13", "13<={G}<16", "16<={G}"]
 
     @property
-    def header(self) -> _ut.fits.Header | None:
+    def header(self) -> _fits.Header | None:
         """
         Returns the header of the PSF FITS file if available.
         """
@@ -94,7 +99,7 @@ class CCD:
 
     def rebin_psf(
         self,
-        psf: _xt.Optional[_ut.fits.HDUList | _xt.ArrayLike] = None,
+        psf: _xt.Optional[_fits.HDUList | _xt.ArrayLike] = None,
         *,
         rebin_factor: int = 2,
         axis_ratio: tuple[int, int] = (1, 1),
@@ -109,6 +114,7 @@ class CCD:
         axis_ratio : tuple of int
             The ratio of the pixel scales in the y and x directions. Default is (1, 3).
         """
+        self._logger.info("Rebinning CCD PSF...")
         px_ratio = (rebin_factor * axis_ratio[0], rebin_factor * axis_ratio[1])
         psf = self.psf
         if psf is None:
@@ -125,12 +131,13 @@ class CCD:
         self.psf = _poppy.utils.rebin_array(psf, px_ratio)
         self.psf_x, self.psf_y = _ut.computeXandYpsf(self.psf)
         self.rebinned = True
-        return "Rebinning complete."
+        self._logger.info("...Completed.")
+        print("Rebinning complete")
 
     def sample_psf(self, psf: _xt.ArrayLike) -> _xt.ArrayLike:
         """
         Sample the PSF to match the CCD pixel scale.
-        
+
         Parameters
         ----------
         psf : array-like
@@ -141,9 +148,10 @@ class CCD:
         list of arrays
             The sampled PSF, in the order: (psf_2d, psf_x, psf_y).
         """
+        self._logger.info("Sampling PSF to match CCD pixel scale...")
         if self.pxscale_factor < 1:
             rbfactor = int(self.pxscale_y.value)
-            ratio = int(1/self.pxscale_factor)
+            ratio = int(1 / self.pxscale_factor)
             rbratio = (rbfactor * ratio, rbfactor)
         else:
             rbfactor = int(self.pxscale_x.value)
@@ -212,7 +220,6 @@ class CCD:
         _plt.show()
         return fig
 
-
     def __repr__(self):
         """String representation of the CCD."""
         return f"""          e2v™ CCD91-72
@@ -258,7 +265,6 @@ Integration time: {self.tdi}
         _plt.yticks(_np.arange(0, 0.85, 0.1))
         _plt.legend()
         _plt.show()
-
 
 
 class GaiaTelescope:

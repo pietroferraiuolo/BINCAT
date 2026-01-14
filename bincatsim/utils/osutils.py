@@ -1,12 +1,13 @@
 # Lets try this way
 from typing import Any as _Any
-from opticalib.ground import osutils as _optosu
-from..core.root import SIMPATH
+from ..core import root as _fn
 from .psfutils import PSFData as _PSFData
+from opticalib.ground import osutils as _optosu
 
-_optosu._OPTDATA = SIMPATH
+_optosu._OPTDATA = _fn.SIMPATH
 
 newtn = _optosu.newtn
+
 
 def get_kwargs(names: tuple[str], default: _Any, kwargs: dict[str, _Any]) -> _Any:
     """
@@ -35,7 +36,8 @@ def get_kwargs(names: tuple[str], default: _Any, kwargs: dict[str, _Any]) -> _An
             return kwargs[key]
     return default
 
-def getFileList(tn: str, fold: str|None = None, key: str|None = None) -> list[str]:
+
+def getFileList(tn: str, fold: str | None = None, key: str | None = None) -> list[str]:
     """
     Search for files in a given tracking number or complete path, sorts them and
     puts them into a list.
@@ -49,7 +51,7 @@ def getFileList(tn: str, fold: str|None = None, key: str|None = None) -> list[st
         folder is the OPD_IMAGES_ROOT_FOLDER.
     key : str, optional
         A key which identify specific files to return.
-        
+
     Returns
     -------
     file_list : list of str
@@ -57,7 +59,8 @@ def getFileList(tn: str, fold: str|None = None, key: str|None = None) -> list[st
     """
     return _optosu.getFileList(tn, fold=fold, key=key)
 
-def load_fits(filepath:str, on_gpu: bool = False) -> _Any:
+
+def load_fits(filepath: str, on_gpu: bool = False) -> _Any:
     """
     Wrapper for opticalib.ground.osutils.load_fits function.
 
@@ -74,6 +77,7 @@ def load_fits(filepath:str, on_gpu: bool = False) -> _Any:
         The data loaded from the FITS file.
     """
     return _optosu.load_fits(filepath, on_gpu=on_gpu)
+
 
 def save_fits(
     filepath: str,
@@ -95,9 +99,8 @@ def save_fits(
     header : dict | Header, optional
         The header information to be included in the FITS file (default is None).
     """
-    return _optosu.save_fits(
-        filepath, data, overwrite=overwrite, header=header
-    )
+    return _optosu.save_fits(filepath, data, overwrite=overwrite, header=header)
+
 
 def load_psf(filepath: str):
     """
@@ -149,18 +152,35 @@ def load_psf_calibration(tn: str) -> "_PSFData":
     psf_cal = load_psf(f)
     return psf_cal
 
-def create_data_folder() -> str:
-    """
-    Creates a new data folder for a given tracking number.
 
+def create_data_folder(basepath: str = _fn.BASE_DATA_PATH) -> str:
+    """
+    Creates a new data folder with a unique tracking number in the specified base path.
+    
     Parameters
     ----------
-    tn : str
-        Tracking number for which to create the data folder.
-
+    basepath : str, optional
+        The base directory where the new tracking number folder will be created.
+        Default is the BASE_DATA_PATH.
+    
     Returns
     -------
-    folder_path : str
-        The path to the newly created data folder.
+    tn_path : str
+        The path to the newly created tracking number folder.
     """
-    return _optosu.create_data_folder(basepath=SIMPATH)
+    import os
+
+    tn = newtn()
+    tn_path = os.path.join(basepath, tn)
+    os.makedirs(tn_path, exist_ok=True)
+    return tn_path
+
+
+__all__ = [
+    "load_fits",
+    "save_fits",
+    "load_psf",
+    "load_psf_cube",
+    "load_psf_calibration",
+    "create_data_folder",
+]
