@@ -9,6 +9,7 @@ from .instruments import CCD
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
 from .utils.logging import SystemLogger as _SL
+from .core.root import OBS_DATA_PATH, SIMPATH
 from opticalib.ground.osutils import _header_from_dict as hfd
 
 
@@ -142,7 +143,7 @@ class GaiaSimulator:
             The CCD to use for the observation.
         """
         N = self._create_ring(radius=self.distance).sum()
-        datapath = create_data_folder()
+        datapath = create_data_folder(OBS_DATA_PATH)
         tn = datapath.split("/")[-1]
         self._logger.info("Starting binary star observations...")
         self._logger.info(f"Data Tracking Number : {tn}")
@@ -263,6 +264,7 @@ class GaiaSimulator:
         gc.collect()
 
         self._logger.info("Observation complete.")
+        self._update_record_file(tn)
         self.is_observed = True
 
         return tn
@@ -503,6 +505,28 @@ class GaiaSimulator:
             _plt.title(f"Ring mask with radius {radius} mas")
             _plt.show()
         return ring_mask
+    
+    def _update_record_file(self, tn: str):
+        """
+        Update the record file with the current binary system parameters.
+        """
+        import pandas as pd
+
+        record_path = os.path.join(SIMPATH, "simulations_record.csv")
+        df = pd.DataFrame({
+            "TN": [tn],
+            "M1": [self.M1],
+            "M2": [self.M2],
+            "G" : [self._Mtot],
+            "D_mas": [self.distance],
+            "φ_max": [self.angle.value],
+        })
+        if os.path.exists(record_path):
+            existing_df = pd.read_csv(record_path)
+            df = pd.concat([existing_df, df], ignore_index=True)
+        df.to_csv(record_path, index=False)
+            
+        self._logger.info("Simulation record file updated.")
 
     def __repr__(self):
         """String representation of the Binary System."""

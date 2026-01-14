@@ -176,6 +176,26 @@ def create_data_folder(basepath: str = _fn.BASE_DATA_PATH) -> str:
     return tn_path
 
 
+def getSimulationRecord():
+    """
+    Loads the simulation record CSV file into a pandas DataFrame.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        The DataFrame containing the simulation records.
+    """
+    import os
+    import pandas as pd
+
+    record_path = os.path.join(_fn.SIM_RECORD_FILE)
+    if os.path.exists(record_path):
+        df = pd.read_csv(record_path, index_col=0)
+    else:
+        df = pd.DataFrame()
+    return df
+
+
 __all__ = [
     "load_fits",
     "save_fits",
@@ -183,4 +203,5 @@ __all__ = [
     "load_psf_cube",
     "load_psf_calibration",
     "create_data_folder",
+    "getSimulationRecord",
 ]
