@@ -11,3 +11,6 @@ OBS_DATA_PATH: str = join(SIMPATH, "observations")
 BANDS_FILE: str = join(BASE_DATA_PATH, "bands.fits")
 PASSBAND_FILE: str = join(BASE_DATA_PATH, "gaiaDR3passband.fits")
 SIM_RECORD_FILE: str = join(SIMPATH, "simulations_record.csv")
+
+def SIMULATION_PARAMETERS_PATH(tn: str) -> str:
+    return join(OBS_DATA_PATH, tn, f"simulation_parameters.yaml")

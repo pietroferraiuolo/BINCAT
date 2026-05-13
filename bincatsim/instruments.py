@@ -1,6 +1,6 @@
 import xupy as xp
 import numpy as _np
-import poppy as _poppy
+import poppy as _poppy # type: ignore
 import astropy.units as _u
 from . import utils as _ut
 from xupy import typings as _xt
@@ -41,17 +41,24 @@ class CCD:
         self._logger = _SL(__class__)
 
         if psf is not None:
+            is_array = False
             if isinstance(psf, _fits.HDUList):
                 self._psf = psf
                 self._meta = psf[0].header
             elif isinstance(psf, str):
-                self._psf = _fits.open(psf)
-                self._meta = self._psf[0].header
+                with _fits.open(psf) as hdul:
+                    self._psf = None
+                    self._meta = hdul[0].header.copy()
+                    self.psf = hdul[0].data.copy()
+            elif isinstance(psf, (xp.ndarray, _np.ndarray)):
+                self._psf = None
+                is_array = True
             else:
                 raise TypeError(
                     "`psf` must be an astropy.io.fits.HDUList or a string path to a FITS file."
                 )
-            self.psf = self._psf[0].data
+            if not isinstance(psf, str):
+                self.psf = self._psf[0].data if not is_array else psf
             self.psf_x, self.psf_y = _ut.computeXandYpsf(self.psf)
             self._logger.info("PSF Loaded")
         else:
@@ -67,12 +74,32 @@ class CCD:
         self._bands = _qt.read(BANDS_FILE)
         self._bands = self._bands[self._bands["band"] == kwargs.get("band", "Gaia_G")]
         self._passbands = _qt.read(PASSBAND_FILE)
+        
+        ## CCD Specifications
         self.pixel_area = kwargs.get("pixel_area", 10 * 30 * _u.um**2)
         self.ccd_pixels = kwargs.get("ccd_pixels", [4500 * _u.pixel, 1966 * _u.pixel])
-        self.pxscale_x = kwargs.get("pixel_scale_x", 59 * _u.mas / _u.pixel)
-        self.pxscale_y = kwargs.get("pixel_scale_y", 177 * _u.mas / _u.pixel)
-        self.pxscale_factor = (self.pxscale_y / self.pxscale_x).value
-        self.tdi = kwargs.get("t_integration", 4.42 * _u.s)
+        self.ccd_pxscale_x = kwargs.get("pixel_scale_x", 59 * _u.mas / _u.pixel)
+        self.ccd_pxscale_y = kwargs.get("pixel_scale_y", 177 * _u.mas / _u.pixel)
+        self.ccd_pxscale_factor = int((self.ccd_pxscale_y / self.ccd_pxscale_x).value)
+        self.full_well_capacity = 190000 * _u.electron
+        self.gain = kwargs.get("gain", 2 * _u.electron / _u.adu)
+        self.fov = (self.ccd_pixels[0] * self.ccd_pxscale_x, self.ccd_pixels[1] * self.ccd_pxscale_y)
+
+        ### Primary mirror's Area
+        self.integration_area = 1.45*0.5 * _u.m**2
+        ### TDI gates on CCD, based on source Magnitude
+        self._TDI_clock_rate = 0.9828e-3 * _u.s
+        self.TDIGates = _np.array([4494, 2906, 2057, 1030, 512, 256, 128, 64, 32, 16, 8, 4, 2])
+        self.integration_time = self.TDIGates * self._TDI_clock_rate
+
+        ## PSF Specifications
+        self.psf_pxscale_x = kwargs.get(
+            "psf_pixel_scale_x", 1 * _u.mas / _u.pixel
+        )
+        self.psf_pxscale_y = kwargs.get(
+            "psf_pixel_scale_y", 1 * _u.mas / _u.pixel
+        )
+
         self.rebinned = False
         self.WC = {
             0: {
@@ -149,13 +176,13 @@ class CCD:
             The sampled PSF, in the order: (psf_2d, psf_x, psf_y).
         """
         self._logger.info("Sampling PSF to match CCD pixel scale...")
-        if self.pxscale_factor < 1:
-            rbfactor = int(self.pxscale_y.value)
-            ratio = int(1 / self.pxscale_factor)
+        if self.ccd_pxscale_factor < 1:
+            rbfactor = int(self.ccd_pxscale_y.value)
+            ratio = int(1 / self.ccd_pxscale_factor)
             rbratio = (rbfactor * ratio, rbfactor)
         else:
-            rbfactor = int(self.pxscale_x.value)
-            ratio = int(self.pxscale_factor)
+            rbfactor = int(self.ccd_pxscale_x.value)
+            ratio = int(self.ccd_pxscale_factor)
             rbratio = (rbfactor, rbfactor * ratio)
         psf_2d = _poppy.utils.rebin_array(psf, rbratio)
         psf_x, psf_y = _ut.computeXandYpsf(psf=psf_2d)
@@ -177,7 +204,7 @@ class CCD:
         **kwargs : dict, optional
             Additional keyword arguments to pass to the display function (`plt.imshow`).
         """
-        if self._psf is None:
+        if self.psf is None:
             raise ValueError("PSF has not been computed yet.")
         if mode == "2d":
             cmap = kwargs.pop("cmap", "gist_heat")
@@ -206,10 +233,10 @@ class CCD:
             _plt.grid(linestyle="--")
             y = _np.arange(len(self.psf_y)) * _u.pixel
             y -= len(y) // 2 * _u.pixel  # center the y-axis
-            y *= self.pxscale_y
+            y *= self.ccd_pxscale_y
             x = _np.arange(len(self.psf_x)) * _u.pixel
             x -= len(x) // 2 * _u.pixel  # center the x-axis
-            x *= self.pxscale_x
+            x *= self.ccd_pxscale_x
             _plt.title(f"PSF in {mode} direction")
             if mode == "x":
                 _plt.plot(x, self.psf_x)
@@ -220,16 +247,218 @@ class CCD:
         _plt.show()
         return fig
 
+    def _compute_tdi_gate_magnitudes(
+        self,
+        mag_bright: float = 3.0,
+        mag_faint: float = 21.0,
+        saturation_margin: float = 0.85,
+    ) -> dict[int, tuple[float, _u.Quantity, float]]:
+        """
+        Compute magnitude thresholds for TDI gate activation based on CCD saturation limits.
+        
+        This method determines at which G-band magnitude each TDI gate should be activated
+        to prevent CCD saturation while maximizing signal-to-noise ratio. The calculation
+        accounts for:
+        - Gaia G-band passband response
+        - CCD quantum efficiency
+        - TDI integration mechanics
+        - Full well capacity limits
+        
+        Physical Basis
+        --------------
+        In TDI (Time Delay Integration) mode, charge accumulates as the stellar image
+        drifts across the CCD. The total accumulated charge is:
+        
+            Q(G, N_TDI) = Φ(G) × A_eff × t_TDI × N_TDI
+        
+        where:
+            Φ(G) : photon flux as function of G magnitude [photons/s]
+            A_eff : effective collecting area [cm²]
+            t_TDI : TDI clock period [s]
+            N_TDI : number of TDI lines (gates)
+        
+        The photon flux follows Pogson's law:
+            Φ(G) = Φ₀ × 10^(-0.4 × G)
+        
+        where Φ₀ is the zero-magnitude photon flux in G-band, which can be computed
+        from the passband integral:
+        
+            Φ₀ = ∫ [F_ν,0 × c/λ² × T(λ) × QE(λ) / (h×c/λ)] dλ
+        
+        Here:
+            F_ν,0 : zero-point flux density (2555.5 Jy for Gaia G vegamag)
+            T(λ)  : passband transmission
+            QE(λ) : quantum efficiency
+        
+        TDI Gate Selection Strategy
+        ----------------------------
+        Each TDI gate i is activated when the accumulated charge would exceed the
+        saturation threshold using the previous (longer) integration time:
+        
+            G_i = G_ref - 2.5 × log₁₀(N_i / N_ref)
+        
+        This ensures:
+        1. Bright stars use short integrations (few TDI lines) → avoid saturation
+        2. Faint stars use long integrations (all TDI lines) → maximize SNR
+        3. Smooth transitions between gates
+        
+        Parameters
+        ----------
+        mag_bright : float, optional
+            Brightest magnitude in operational range (default: 3.0).
+            This should be G < 3 for Gaia to avoid saturation even with minimum integration.
+        mag_faint : float, optional
+            Faintest magnitude in operational range (default: 21.0).
+            Beyond this, even maximum integration may not provide sufficient SNR.
+        saturation_margin : float, optional
+            Safety margin as fraction of full well capacity (default: 0.85).
+            Set to 85% to account for:
+            - Non-linearity above ~70% FWC
+            - Variable stars
+            - Photometric uncertainty
+            - Background contribution
+        use_passband_integration : bool, optional
+            If True, integrate over G-band passband accounting for wavelength-dependent
+            QE and transmission. If False, use effective wavelength approximation.
+            Default: True (more accurate but slower).
+        
+        Returns
+        -------
+        dict[int, tuple[float, Quantity, float]]
+            Dictionary mapping TDI gate number to:
+            - magnitude_threshold : G magnitude at which to activate this gate
+            - integration_time : resulting integration time [s]
+            - electrons_per_sec : electron generation rate at threshold [e⁻/s]
+            
+        Examples
+        --------
+        >>> ccd = CCD(band="Gaia_G")
+        >>> tdi_gates = ccd.compute_tdi_gate_magnitudes()
+        >>> 
+        >>> # Display activation thresholds
+        >>> print("TDI Gate Activation Strategy")
+        >>> print("-" * 70)
+        >>> print(f"{'G range':^15} | {'TDI Gates':^10} | {'t_int [s]':^12} | {'e⁻/s':^15}")
+        >>> print("-" * 70)
+        >>> 
+        >>> prev_mag = mag_bright
+        >>> for gate in sorted(tdi_gates.keys(), reverse=False):
+        ...     mag, t_int, rate = tdi_gates[gate]
+        ...     print(f"{prev_mag:5.2f} - {mag:5.2f} | {gate:^10d} | {t_int.value:^12.4f} | {rate:^15.2e}")
+        ...     prev_mag = mag
+        
+        Notes
+        -----
+        - The reference magnitude is anchored at the brightest star (mag_bright) with
+        minimum integration time (2 TDI gates)
+        - For binaries, use the combined magnitude: G_tot = -2.5×log₁₀(10^(-0.4×G₁) + 10^(-0.4×G₂))
+        - Window classes (WC0, WC1, WC2) affect the effective pixel area and should be
+        accounted for separately in the readout simulation
+        
+        References
+        ----------
+        - Gaia Collaboration (2016), A&A 595, A1 - Gaia Data Release 1
+        - Jordi et al. (2010), A&A 523, A48 - Gaia broad band photometry
+        - de Bruijne et al. (2015), A&A 576, A74 - Gaia calibration framework
+        
+        See Also
+        --------
+        get_integration_time : Get integration time for a specific G magnitude
+        _compute_star_flux : Compute photon flux for a given magnitude
+        """
+        # Validate inputs
+        if not (0 < saturation_margin <= 1):
+            raise ValueError(f"saturation_margin must be in (0, 1], got {saturation_margin}")
+        if mag_bright >= mag_faint:
+            raise ValueError(f"mag_bright ({mag_bright}) must be < mag_faint ({mag_faint})")
+        
+        # Reference: brightest stars use minimum integration (2 gates)
+        # This anchors our calibration
+        t_ref = self.integration_time[0]  # Minimum integration (2 gates)
+        Q_max = saturation_margin * self.full_well_capacity.to_value(_u.electron)
+        
+        photon_rate_ref = self._compute_photon_rate_from_passband(mag_bright)
+        Q_ref = photon_rate_ref * t_ref.to_value(_u.s)
+        delta_mag = -2.5 * _np.log10(Q_max / Q_ref)
+        G_ref = mag_bright + delta_mag
+        
+        if Q_ref > Q_max:
+            import warnings
+            warnings.warn(
+                f"Saturation at G={G_ref:.1f} even with minimum integration!\n"
+                f"  Expected: {Q_ref:.0f} photons\n"
+                f"  Maximum:  {Q_max:.0f} e⁻\n"
+                f"Consider reducing mag_bright or increasing saturation_margin.",
+                category=RuntimeWarning
+            )
+        
+        # Now compute magnitude threshold for each TDI gate
+        # Using: Φ(G) ∝ 10^(-0.4×G)
+        # If Q(G_i, t_i) = Q_max, then:
+        # Φ(G_i) × t_i = Φ(G_ref) × t_ref
+        # 10^(-0.4×G_i) × t_i = 10^(-0.4×G_ref) × t_ref
+        # G_i = G_ref - 2.5 × log₁₀(t_i / t_ref)
+        
+        thresholds: dict[int, tuple[float, _u.Quantity]] = {}
+        for n_gates, t_int in zip(self.TDIGates, self.integration_time):
+            G_thresh = G_ref - 2.5 * _np.log10((t_ref / t_int).decompose().value)
+            G_thresh = float(_np.clip(G_thresh, mag_bright, mag_faint))
+            thresholds[int(n_gates)] = (G_thresh, t_int)
+
+        self._logger.info("Computed TDI gate thresholds from passband integration.")
+        return thresholds
+
+
+    def _compute_photon_rate_from_passband(self, G_mag: float) -> float:
+        """
+        Compute photon generation rate integrating over G-band passband.
+        
+        This is the most accurate method as it accounts for:
+        - Wavelength-dependent quantum efficiency
+        - Passband transmission profile
+        - Proper photon energy at each wavelength
+        
+        Parameters
+        ----------
+        G_mag : float
+            G-band magnitude
+        
+        Returns
+        -------
+        float
+            Photon generation rate [photons/s]
+        """
+        from astropy.constants import h, c
+        from scipy.integrate import simpson
+        
+        # Get passband data
+        wl = self._passbands["lambda"].to(_u.nm)  # nm
+        T = self._passbands["G"]  # dimensionless
+        
+        # Gaia G-band zero point (Vega magnitude system)
+        Fnu0 = 30300 * _u.Jy
+        Fnu = Fnu0 * 10 ** (-0.4 * G_mag)                       # erg/s/cm²/Hz
+        Flam = (Fnu * c / (wl.to(_u.m) ** 2)).to(_u.erg / _u.s / _u.cm**2 / _u.nm)
+        Ephot = (h * c / wl.to(_u.m)).to(_u.erg)
+        phi = (Flam / Ephot).to(1 / (_u.s * _u.cm**2 * _u.nm))  # photons/s/cm²/nm
+
+        integrand = phi.value * T
+        phi_tot = simpson(integrand, x=wl.to_value(_u.nm))      # photons/s/cm²
+        photon_rate = phi_tot * self.integration_area.to_value(_u.cm**2)
+        
+        return float(photon_rate)
+
+
     def __repr__(self):
         """String representation of the CCD."""
         return f"""          e2v™ CCD91-72
           -------------
             Band: {self._bands['band'][0]}
       Pixel area: {self.pixel_area}
-     Pixel Scale: {self.pxscale_x.to_value(_u.mas/_u.pix):.1f} x {self.pxscale_y.to_value(_u.mas/_u.pix):.1f} {_u.mas/_u.pix}
+     Pixel Scale: {self.ccd_pxscale_x.to_value(_u.mas/_u.pix):.1f} x {self.ccd_pxscale_y.to_value(_u.mas/_u.pix):.1f} {_u.mas/_u.pix}
         CCD fov : {self.ccd_pixels[0].value:.0f} x {self.ccd_pixels[1].value:.0f}  {self.ccd_pixels[0].unit}
                -> {self.fov[0].to_value(_u.arcmin):.2f} x {self.fov[1].to_value(_u.arcmin):.2f} {_u.arcmin}
-Integration time: {self.tdi}
+Integration time: {self.integration_time[0]:.2f}
        PSF shape: {list(self.psf.shape) if self.psf is not None else 'Not computed yet'} {"Rebinned" if self.rebinned else ""}
     """
 

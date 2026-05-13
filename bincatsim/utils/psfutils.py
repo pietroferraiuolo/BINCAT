@@ -3,12 +3,16 @@ import xupy as _xp
 from astropy.io import fits
 from typing import Any as _Any
 from numpy.typing import ArrayLike as _Array
+import yaml as _yaml
 import xupy.typings as _xt
+from ..core.root import SIMULATION_PARAMETERS_PATH as _spp
+from . import osutils as _osu
 
 
 @_dc.dataclass(init=True, frozen=True, repr=False)
 class PSFData:
     psf: list[_Array] | fits.HDUList | str
+    tn: str | None
 
     def __post_init__(self):
         if isinstance(self.psf, list):
@@ -46,6 +50,21 @@ class PSFData:
             raise TypeError(
                 "PSF must be a list, fits.HDUList, or a fits file path string."
             )
+
+        try:
+            object.__setattr__(self, "_simparams", _yaml.safe_load(_spp(self.tn)))
+        except Exception:
+            object.__setattr__(self, "_simparams", None)
+    
+    @property
+    def simparams(self) -> dict[str, _Any]:
+        if self._simparams is None:
+            raise TypeError(
+                "Simulation parameters not found. Ensure that the PSF was "
+                "initialized with a valid `tn` and that the corresponding "
+                "`simulation_parameters.yaml` file exists."
+            )
+        return self._simparams
 
     @property
     def psf_2d(self) -> _Array:
@@ -91,6 +110,48 @@ class PSFData:
             arg = f"calibration, G={G:.3f}"
         return f"PSFData({arg})"
 
+class PSFCube(list[PSFData]):
+    
+    def __init__(self, tn: str):
+        """The constructor"""
+        self.tn = tn
+        psflist = _osu.getFileList(tn, key='psf')
+        calib = _osu.getFileList(tn, key='calibration')
+
+        if len(calib) != 1:
+            raise ValueError(f"Expected exactly one calibration file, found {len(calib)}.")
+        
+        self._init_data(psflist, calib[0])
+        
+    def _init_data(self, psflist: list[str], calib_file: str):
+        """
+        Initializes the PSF cube data by loading the calibration and PSF files.
+        
+        Parameters
+        ----------
+        psflist : list of str
+            A list of file paths to the PSF FITS files.
+        calib_file : str
+            The file path to the calibration FITS file.
+            
+        Returns
+        -------
+        None
+        """
+        self.calibration = PSFData(calib_file, tn=self.tn)
+        for psf_file in psflist:
+            self.append(PSFData(psf_file, tn=None))
+        
+        self._simpar = self.calibration.simparams
+    
+    def __repr__(self):
+        return f"PSFCube(n_psfs={len(self)}, tn='{self.tn}')"
+    
+    def __str__(self):
+        return self.__repr__()
+    
+    def __getitem__(self, index):
+        return super().__getitem__(index)
 
 def display_psf(
     psf: _xt.ArrayLike,
@@ -369,6 +430,8 @@ def convolve_fft(
 
 
 __all__ = [
+    "PSFData",
+    "PSFCube",
     "computeXandYpsf",
     "convolve_fft",
     "display_psf",

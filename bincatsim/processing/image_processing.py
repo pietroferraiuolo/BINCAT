@@ -43,3 +43,5 @@ def upsample(img: _xt.Array, s: int = 4, order: str = "cubic") -> _xt.Array:
         img, out_shape, order=order_map[order], anti_aliasing=False, preserve_range=True
     )
     return y.astype(img.dtype)
+
+__all__ = ["upsample"]

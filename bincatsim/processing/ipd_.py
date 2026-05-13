@@ -1,5 +1,5 @@
 import xupy as _xp
-import utils as _ut
+from bincatsim import utils as _ut
 import astropy.units as _u
 from xupy import typings as _xt
 from matplotlib import pyplot as _plt
@@ -44,7 +44,7 @@ def ipd_gof_harmonic(
             + f"={gof_amplitude:.1e}   |   "
             + r"$\varphi_{ipd}$"
             + f"={gof_phase:.2f} deg",
-            xlabel=r"Scan Angle $\varphi$",
+            xlabel=r"Scan Angle $\varphi$ [deg]",
         )
 
         label = plots._kde_labels(fit.kind, fit.coeffs)  # type: ignore
@@ -182,3 +182,11 @@ def _reduced_chi_squared(
             errors = np.ones_like(observed)
         chi_squared = np.sum(((observed - expected) / errors) ** 2)
     return chi_squared / (len(observed) - ddof)
+
+__all__ = [
+    "ipd_gof_harmonic",
+    "ipd_frac_multipeak", 
+    "get_chi_phi",
+    "find_local_maxima",
+    "_reduced_chi_squared"
+]

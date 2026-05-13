@@ -9,7 +9,7 @@ from .instruments import CCD
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
 from .utils.logging import SystemLogger as _SL
-from .core.root import OBS_DATA_PATH, SIMPATH
+from .core.root import OBS_DATA_PATH, SIMPATH, SIMULATION_PARAMETERS_PATH
 from opticalib.ground.osutils import _header_from_dict as hfd
 
 
@@ -75,8 +75,7 @@ class GaiaSimulator:
         if not isinstance(distance, _u.Quantity):
             self.distance = distance * _u.mas  # assuming input is in mas
         else:
-            if distance.unit != _u.mas:
-                self.distance = distance.to(_u.mas)
+            self.distance = distance.to(_u.mas)
         self.distance = int(self.distance.value)  # mas
         self._logger.info(f"Angular separation set to {self.distance} mas.")
 
@@ -112,8 +111,8 @@ class GaiaSimulator:
 
         del G
 
-        self.collecting_area = self.ccd.WC[idx]["area_um"]
-        self.t_int = self.ccd.tdi
+        self.collecting_area = self.ccd.integration_area
+        self.t_int = 4 * _u.s  # Default integration time for Gaia CCDs
 
         self.central_star_flux = self._compute_star_flux(
             self.M1, collecting_area=self.collecting_area, integration_time=self.t_int
@@ -127,7 +126,13 @@ class GaiaSimulator:
 
         self._base_map = self._create_base_map()
 
-    def observe(self, ccd: CCD, map_dtype: str = "float32") -> str:
+    def observe(
+        self,
+        ccd: CCD | None = None,
+        read_out_noise: bool = False,
+        shot_noise: bool = False,
+        map_dtype: str = "float32"
+    ) -> str:
         """
         Observe the sky map with the given CCD:
 
@@ -139,9 +144,12 @@ class GaiaSimulator:
 
         Parameters
         ----------
-        ccd : CCD
-            The CCD to use for the observation.
+        ccd : CCD, optional
+            The CCD to use for the observation. If not provided, the default CCD will be used.
         """
+        if ccd is None:
+            ccd = self.ccd
+
         N = self._create_ring(radius=self.distance).sum()
         datapath = create_data_folder(OBS_DATA_PATH)
         tn = datapath.split("/")[-1]
@@ -153,13 +161,13 @@ class GaiaSimulator:
         header = self._prepare_main_header()
         header["PIXELSCL"] = (self.ccd.header["PIXELSCL"], "Pixel scale [mas/pixel]")
         imgHeader = self._prepare_main_header()
-        imgHeader["PXSCLREB"] = (self.ccd.pxscale_factor, "Pxscale rebin ratio (y/x)")
+        imgHeader["PXSCLREB"] = (self.ccd.ccd_pxscale_factor, "Pxscale rebin ratio (y/x)")
         imgHeader["PXSCLXRB"] = (
-            self.ccd.pxscale_x.value,
+            self.ccd.ccd_pxscale_x.value,
             "Rebinned pxscale_x [mas/pixel]",
         )
         imgHeader["PXSCLYRB"] = (
-            self.ccd.pxscale_y.value,
+            self.ccd.ccd_pxscale_y.value,
             "Rebinned pxscale_y [mas/pixel]",
         )
 
@@ -189,9 +197,12 @@ class GaiaSimulator:
                 f"Image {i:04d}: Convolution complete at angle {phi:.2f} degrees."
             )
 
-            # Add Poisson noise to the convolved image
-            # noisy = _np.random.poisson(convolved).astype(_np.float32)
-            # self._logger.info(f"Image {i:04d}: photon shot noise added.")
+            # ---- Shot Noise ---- #
+            if shot_noise:
+                noisy = _np.random.poisson(convolved).astype(_np.float32)
+                convolved = noisy
+                self._logger.info(f"Image {i:04d}: photon shot noise added.")
+            # ------------------- #
 
             psf_2d, _, _ = ccd.sample_psf(psf=convolved)
             self._logger.info(f"Image {i:04d}: PSF read-out complete (binning).")
@@ -214,23 +225,25 @@ class GaiaSimulator:
                     psf_2d = _np.roll(psf_2d, (psf_2d.shape[1] // 8, 0), (0, 1))
 
             # ---- Read-Out Noise ---- #
-            ron = (
-                _np.random.normal(0, _np.random.randint(2, 6), size=psf_2d.shape) * 0.5
-            )
-            ron[ron < 0] = 0
-            psf_2d += ron
-            self._logger.info(f"Image {i:04d}: read-out noise added.")
+            if read_out_noise:
+                ron = (
+                    _np.random.normal(0, _np.random.randint(2, 6), size=psf_2d.shape) * 0.5
+                )
+                ron[ron < 0] = 0
+                psf_2d += ron
+                self._logger.info(f"Image {i:04d}: read-out noise added.")
+            # ------------------------ #
 
             psf_x, psf_y = computeXandYpsf(psf=psf_2d)
             self._logger.info(f"Image {i:04d}: PSF X and Y computed.")
             final = (psf_2d, psf_x, psf_y)
 
-            hdul = fits.HDUList()
-            hdul.append(fits.PrimaryHDU(final[0], header=h1))
-            hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
-            hdul.append(fits.ImageHDU(final[2], name="PSF_Y"))
-            hdul.append(fits.ImageHDU(convolved, name="HighRes obs", header=h2))
-            hdul.writeto(os.path.join(datapath, f"{i:04d}.fits"), overwrite=True)
+            with fits.HDUList() as hdul:
+                hdul.append(fits.PrimaryHDU(final[0], header=h1))
+                hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
+                hdul.append(fits.ImageHDU(final[2], name="PSF_Y"))
+                hdul.append(fits.ImageHDU(convolved, name="HighRes obs", header=h2))
+                hdul.writeto(os.path.join(datapath, f"{i:04d}.fits"), overwrite=True)
             self._logger.info(f"Image {i:04d}: FITS file saved.")
             del convolved, final
             gc.collect()
@@ -246,18 +259,18 @@ class GaiaSimulator:
         )
         final = ccd.sample_psf(psf=convolved)
 
-        hdul = fits.HDUList()
         for k in ["M1", "M2", "DISTMAS", "PHI"]:
             h1.pop(k)
             h2.pop(k)
         h1["GMAG"] = (self._Mtot, "Calibration G-Magnitude of the expected source")
         h2["GMAG"] = (self._Mtot, "Calibration G-Magnitude of the expected source")
 
-        hdul.append(fits.PrimaryHDU(final[0], header=h1))
-        hdul.append(fits.ImageHDU(final[1], name="PSF_AL"))
-        hdul.append(fits.ImageHDU(final[2], name="PSF_AC"))
-        hdul.append(fits.ImageHDU(convolved, name="HighRes Calib", header=h2))
-        hdul.writeto(os.path.join(datapath, f"calibration.fits"), overwrite=True)
+        with fits.HDUList() as hdul:
+            hdul.append(fits.PrimaryHDU(final[0], header=h1))
+            hdul.append(fits.ImageHDU(final[1], name="PSF_AL"))
+            hdul.append(fits.ImageHDU(final[2], name="PSF_AC"))
+            hdul.append(fits.ImageHDU(convolved, name="HighRes Calib", header=h2))
+            hdul.writeto(os.path.join(datapath, f"calibration.fits"), overwrite=True)
         self._logger.info("Calibration FITS file saved.")
 
         del convolved, final
@@ -268,6 +281,34 @@ class GaiaSimulator:
         self.is_observed = True
 
         return tn
+
+    def get_integration_time(self) -> _u.Quantity:
+        """
+        Sceglie il tempo di integrazione (gate TDI) per la magnitudine combinata G_tot.
+        Logica: usa il gate più lungo che non satura (G_tot >= G_thresh).
+        """
+        G_tot = self._Mtot
+        thresholds = self.ccd._compute_tdi_gate_magnitudes(
+            mag_bright=3.0, mag_faint=21.0, saturation_margin=0.85
+        )
+
+        # ordina per tempo decrescente (gates più lunghi prima)
+        sorted_gates = sorted(
+            thresholds.items(), key=lambda kv: kv[1][1], reverse=True
+        )
+
+        for n_gates, (G_thresh, t_int) in sorted_gates:
+            if G_tot >= G_thresh:
+                self._logger.info(
+                    f"TDI gate {n_gates}: G_tot={G_tot:.2f} >= G_thresh={G_thresh:.2f}; t_int={t_int:.4f}"
+                )
+                return t_int
+
+        # se troppo brillante, fallback al minimo
+        self._logger.warning(
+            f"Source very bright (G={G_tot:.2f}); using minimum TDI gate."
+        )
+        return self.ccd.integration_time[-1]  # 2 linee
 
     def show_system(self, out: bool = False, **kwargs: dict[str, _xt.Any]) -> None:
         """
@@ -362,6 +403,52 @@ class GaiaSimulator:
         dy = yi - yc
         phi = (xp.np.arctan2(dy, dx)) % (2 * xp.np.pi) * _u.rad
         return phi.to_value(_u.deg)
+
+    def save_simulation_parameters(self, tn: str, other_params: dict[str, _xt.Any] = None):
+        """
+        Save the simulation parameters to a text file for future reference.
+
+        Parameters
+        ----------
+        tn : str
+            The tracking number of the simulation, used to name the parameter file.
+        """
+        import yaml
+
+        params = {
+            "MAGNITUDES": {
+                "central_star": {
+                    "M":self.M1,
+                    "photon_flux": self.central_star_flux
+                },
+                "companion_star": {
+                    "M": self.M2,
+                    "photon_flux": self.comp_star_flux
+                },
+                "calibration": self._Mtot
+            },
+            "SPACIAL PARAMETERS": {
+                "distance_mas": self.distance,
+                "spanned_angle_deg": self.angle.value,
+                "map_shape_pixels": self.map_shape,
+            },
+            "SPECTRAL PARAMETERS": {
+                "band": self._bands["band"][0],
+                "wavelength":
+                    f"{self._bands['wavelength'][0].to_value(_u.nm)} - "
+                    f"{self._bands['wavelength'][-1].to_value(_u.nm)} nm",
+                "zeropoint_Jy": self._bands["zero_point"][0].value,
+                "bandwidth_nm": self._bands["bandwidth"][0].to_value(_u.nm),
+            }
+        }
+        
+        if other_params is not None:
+            params.update(other_params)
+
+        with open(SIMULATION_PARAMETERS_PATH(tn), "w") as f:
+            yaml.dump(params, f)
+
+        self._logger.info("Simulation parameters saved.")
 
     def _create_base_map(self):
         """
@@ -460,7 +547,7 @@ class GaiaSimulator:
 
     def _create_ring(
         self, radius: int, show: bool = False
-    ) -> _np.ndarray[int, _xt.Any]:
+    ) -> _np.ndarray:
         """
         Create a ring mask for the sky map.
 

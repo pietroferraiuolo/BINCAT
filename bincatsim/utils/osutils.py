@@ -1,7 +1,6 @@
 # Lets try this way
 from typing import Any as _Any
 from ..core import root as _fn
-from .psfutils import PSFData as _PSFData
 from opticalib.ground import osutils as _optosu
 
 _optosu._OPTDATA = _fn.SIMPATH
@@ -117,10 +116,12 @@ def load_psf(filepath: str):
         A list containing the PSF data arrays in the order:
         [psf_2d, psf_x, psf_y, psf_hr].
     """
-    return _PSFData(psf=filepath)
+    from .psfutils import PSFData
+    
+    return PSFData(psf=filepath)
 
 
-def load_psf_cube(tn: str) -> list["_PSFData"]:
+def load_psf_cube(tn: str) -> list:
     """
     Load a series of PSF FITS files into a list of PSFData objects.
 
@@ -137,7 +138,7 @@ def load_psf_cube(tn: str) -> list["_PSFData"]:
     return psf_cube
 
 
-def load_psf_calibration(tn: str) -> "_PSFData":
+def load_psf_calibration(tn: str):
     """
     Load the PSF calibration FITS file into a PSFData object.
 

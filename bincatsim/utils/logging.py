@@ -164,11 +164,22 @@ def set_up_logger(
     else:
         FORMAT = "[%(levelname)s] - %(asctime)s - %(name)s : %(message)s"
     formato = _l.Formatter(fmt=FORMAT, datefmt="%Y%m%d_%H%M%S")
+    root_logger = _l.getLogger()
+    root_logger.setLevel(logging_level)
+
+    # Reuse an existing handler for the same file to avoid leaking descriptors.
+    abs_file_path = os.path.abspath(file_path)
+    for existing in root_logger.handlers:
+        if isinstance(existing, _lh.RotatingFileHandler):
+            existing_path = getattr(existing, "baseFilename", None)
+            if existing_path == abs_file_path:
+                existing.setFormatter(formato)
+                existing.setLevel(logging_level)
+                return root_logger
+
     handler = _lh.RotatingFileHandler(
         file_path, encoding="utf8", maxBytes=10000000, backupCount=1
     )
-    root_logger = _l.getLogger()
-    root_logger.setLevel(logging_level)
     handler.setFormatter(formato)
     handler.setLevel(logging_level)
     root_logger.addHandler(handler)
