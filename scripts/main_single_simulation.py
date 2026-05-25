@@ -48,11 +48,13 @@ if __name__ == "__main__":
 
     sim = GaiaSimulator(
         ccd=CCD(
-            psf=PSF_DATA_PATH+'/1062x2124_gpsf.fits',
+            psf=PSF_DATA_PATH+'/1062x2124_gpsf_T.fits',
             psf_pixel_scale_x = 177*u.mas,
             psf_pixel_scale_y = 59*u.mas
         ),
         **params
     )
 
-    sim.observe()
+    tn = sim.observe()
+    
+    sim.update_record_file(tn)

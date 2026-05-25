@@ -80,7 +80,7 @@ class CCD:
         self.ccd_pixels = kwargs.get("ccd_pixels", [4500 * _u.pixel, 1966 * _u.pixel])
         self.ccd_pxscale_x = kwargs.get("pixel_scale_x", 59 * _u.mas / _u.pixel)
         self.ccd_pxscale_y = kwargs.get("pixel_scale_y", 177 * _u.mas / _u.pixel)
-        self.ccd_pxscale_factor = int((self.ccd_pxscale_y / self.ccd_pxscale_x).value)
+        self.ccd_pxscale_factor = (self.ccd_pxscale_y / self.ccd_pxscale_x).value
         self.full_well_capacity = 190000 * _u.electron
         self.gain = kwargs.get("gain", 2 * _u.electron / _u.adu)
         self.fov = (self.ccd_pixels[0] * self.ccd_pxscale_x, self.ccd_pixels[1] * self.ccd_pxscale_y)
@@ -206,6 +206,7 @@ class CCD:
         """
         if self.psf is None:
             raise ValueError("PSF has not been computed yet.")
+        fig = _plt.figure()
         if mode == "2d":
             cmap = kwargs.pop("cmap", "gist_heat")
             from astropy.visualization import (
@@ -220,14 +221,12 @@ class CCD:
                 stretch=LogStretch(500),
                 interval=MinMaxInterval(),
             )
-            fig = _plt.figure()
             _plt.imshow(self.psf, cmap=cmap, norm=norm, **kwargs)
             _plt.colorbar()
             _plt.title("CCD PSF")
             _plt.xlabel("X [px]")
             _plt.ylabel("Y [px]")
         else:
-            fig = _plt.figure()
             _plt.xlabel("arcsec")
             _plt.ylabel("Normalized PSF")
             _plt.grid(linestyle="--")

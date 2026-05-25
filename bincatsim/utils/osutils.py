@@ -101,57 +101,57 @@ def save_fits(
     return _optosu.save_fits(filepath, data, overwrite=overwrite, header=header)
 
 
-def load_psf(filepath: str):
+def load_psf(tn_or_fp: str, **kwargs: _Any):
     """
     Loads a PSF from a FITS file.
 
     Parameters
     ----------
-    filepath : str
-        Path to the FITS file containing the PSF data.
+    tn_or_fp : str
+        Tracking number of a simulation folder or path to the FITS file 
+        containing the PSF data.
+    **kwargs : dict, optional
+        Additional options passed to PSFCube when `tn_or_fp` is a tracking
+        number. Supported keys are `load_mode`, `cache_size`, and `prefetch`.
 
     Returns
     -------
-    psf_data : list of np.ndarray
-        A list containing the PSF data arrays in the order:
-        [psf_2d, psf_x, psf_y, psf_hr].
+    psf : PSFData object | PSFCube object
+        If `tn_or_fp` is a tracking number, a PSFCube object containing all the 
+        PSFs data of a given simulation will be returned.
+        If `tn_or_fp` is a path to a FITS file, a PSFData object containing the PSF data
+        of the file will be returned.
     """
-    from .psfutils import PSFData
+    from .psfutils import PSFData, PSFCube
     
-    return PSFData(psf=filepath)
-
-
-def load_psf_cube(tn: str) -> list:
-    """
-    Load a series of PSF FITS files into a list of PSFData objects.
-
-    Parameters
-    ----------
-    tn : str
-        Tracking number to identify the folder containing the PSF FITS files.
-    """
-    fl = _optosu.getFileList(tn)
-    __ = fl.pop(-1)
-    psf_cube = []
-    for f in fl:
-        psf_cube.append(load_psf(f))
-    return psf_cube
+    if _optosu.is_tn(tn_or_fp):
+        return PSFCube(tn=tn_or_fp, **kwargs)
+    
+    return PSFData(psf=tn_or_fp)
 
 
 def load_psf_calibration(tn: str):
     """
-    Load the PSF calibration FITS file into a PSFData object.
+    Get the PSF calibration FITS filepath for a tracking number.
 
     Parameters
     ----------
     tn : str
         Tracking number to identify the folder containing the PSF calibration FITS file.
+
+    Returns
+    -------
+    calib : PSFData
+        The PSFData object containing the calibration data.
     """
-    fl = _optosu.getFileList(tn)
-    f = fl.pop(-1)
-    del fl
-    psf_cal = load_psf(f)
-    return psf_cal
+    from .psfutils import PSFData
+    
+    calib = _optosu.getFileList(tn, key='calibration')
+    if not isinstance(calib, str):
+        raise ValueError(
+            f"Expected exactly one calibration file for '{tn}', found {len(calib)}."
+        )
+    return PSFData(calib, tn=tn)
 
 
 def create_data_folder(basepath: str = _fn.BASE_DATA_PATH) -> str:
@@ -201,7 +201,6 @@ __all__ = [
     "load_fits",
     "save_fits",
     "load_psf",
-    "load_psf_cube",
     "load_psf_calibration",
     "create_data_folder",
     "getSimulationRecord",

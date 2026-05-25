@@ -1,192 +1,419 @@
+import gc
+import numpy as _np
+from inspect import Parameter, Signature
 import xupy as _xp
 from bincatsim import utils as _ut
 import astropy.units as _u
 from xupy import typings as _xt
 from matplotlib import pyplot as _plt
 from grasp.stats import fit_data_points
+from scipy.signal import find_peaks
 
 
-def ipd_gof_harmonic(
-    observed_cube: _ut.PSFData,
-    calibrated_psf: _ut.PSFData,
-    errors: _xt.Array = None,
-    ddof: int = 0,
-    show: bool = False,
-) -> float:
+def _harmonic_decomposition(x, *coeffs):
     """
-    Calculate the goodness-of-fit statistic based on harmonic mean.
+    Generalized harmonic decomposition of order N:
+    
+    ... math::
+        f(φ) = c0 + Σ_{k=1}^{N} [c_{2k} cos(2k φ) + s_{2k} sin(2k φ)]
+    
+    coeffs: [c0, c2, s2, c4, s4, ..., c_{2N}, s_{2N}]
     """
-    with _xp.NumpyContext() as np:
-        chiphi = get_chi_phi(observed_cube, calibrated_psf, errors=errors, ddof=ddof)
+    x = _np.deg2rad(x)
+    result = coeffs[0]
+    for i, k in enumerate(range(1, (len(coeffs)) // 2 + 1)):
+        c = coeffs[2*i + 1]
+        s = coeffs[2*i + 2]
+        result += c * _np.cos(2*k * x) + s * _np.sin(2*k * x)
+    return result
 
-        def harmonic_decomposition(x: float, c0: float, c2: float, s2: float) -> float:
-            x = x * _u.deg.to(_u.rad)
-            return c0 + c2 * np.cos(2 * x) + s2 * np.sin(2 * x)
+def harmonic_decomposition(order: int):
+    """
+    Factory function that returns a harmonic decomposition function of order N.
+    
+    Parameters
+    ----------
+    order : int
+        The maximum harmonic order N.
+    
+    Returns
+    -------
+    callable
+        A function f(x, c0, c2, s2, ..., c_{2N}, s_{2N}).
+    """
+    params = [Parameter('x', Parameter.POSITIONAL_OR_KEYWORD)]
+    params += [Parameter('c0', Parameter.POSITIONAL_OR_KEYWORD)]
+    for k in range(1, order + 1):
+        params += [
+            Parameter(f'c{2*k}', Parameter.POSITIONAL_OR_KEYWORD),
+            Parameter(f's{2*k}', Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+    def func(x, *coeffs):
+        return _harmonic_decomposition(x, *coeffs)
+    func.__signature__ = Signature(params) # type: ignore
+    func.__name__ = f'harmonic_decomposition_order{order}'
+    return func
+
+
+class IPD():
+    """
+    Class to perform IPD analysis on a PSF cube.
+    
+    Parameters
+    ----------
+    tn : str
+        The transit name for which to run the IPD analysis.
+    fitted_parameters : int, optional
+        The number of fitted parameters. Default is 1.
+    
+    Attributes
+    ----------
+    tn : str
+        The transit name.
+    cube : _ut.PSFCube
+        The PSF cube loaded from the transit name.
+    calibration : _ut.PSFData
+        The calibration PSF data extracted from the cube.
+    P : int
+        The number of fitted parameters.
+    N : int
+        The number of observations in the cube.
+    dof : int
+        The degrees of freedom for the chi-squared calculation (N - P).
+    chi2 : np.ndarray or None
+        The chi-squared values for each observation in the cube. Initially None.
+    phi : np.ndarray or None
+        The scan angles for each observation in the cube. Initially None.
+    
+    Methods
+    -------
+    ``chiphi()``
+        Generator that yields (chi2, phi) pairs sorted by increasing phi.
+    ``chi2(which='2d')``
+        Compute the reduced chi-squared statistic for the PSF fit of each observation in the cube.
+    ``GoF(which='2d')``
+        Compute the goodness-of-fit statistic based on the chi-squared values.
+    ``uwe()``
+        Compute the unit weight error (UWE) for the astrometric fit of a 5-parameter solution.
+    ``fit(degree=2)``
+        Fit a polynomial of given degree to the chi-squared values as a function of phi.
+    ``__call__(statistic=None)``
+        Alias for the fit method, allowing the object to be called directly to perform the fit.
+    """
+    def __init__(
+        self, 
+        tn: str|None = None, *,
+        cube: _ut.PSFCube | None = None,
+        fitted_parameters: int = 1
+    ):
+        """The constructor"""
+        ## Data ##
+        if tn is not None:
+            self.tn = tn
+            self.cube = cube if cube is not None else _ut.load_psf(tn)
+        elif cube is not None:
+            self.cube = cube
+            self.tn = None
+        else:
+            raise ValueError("Either 'tn' or 'cube' must be provided.")
+        self.calibration = self.cube.calibration
+        
+        ## Parameters ##
+        self.P = fitted_parameters
+        self.N = len(self.cube)
+        self.dof = self.N - self.P
+        
+        ## Computed ##
+        self.chi2 = None
+        self.chi2_al = None
+        self.chi2_ac = None
+        self.phi = None
+        self._fit = None
+        self.gof_amp = None
+        self.gof_phase = None
+        self.uwe = None
+
+    def set_tn(self, tn: str):
+        """
+        Set a new tracking number and reload the cube and calibration.
+        
+        Parameters
+        ----------
+        tn : str
+            The new tracking number data folder to load.
+        """
+        self.tn = tn
+        self.cube = _ut.load_psf(tn)
+        self.calibration = self.cube.calibration
+        self.N = len(self.cube)
+        self.dof = self.N - self.P
+        self.chi2 = None
+        self.chi2_al = None
+        self.chi2_ac = None
+        self.phi = None
+        self._fit = None
+        self.gof_amp = None
+        self.gof_phase = None
+        self.uwe = None
+
+    def cube_chi2(self):
+        """
+        Compute the reduced chi-squared statistic for the PSF fit of each observation in the cube.
+        """
+        chi2 = []
+        for w in ['2d', 'al', 'ac']:
+            chi2.append(self._compute_chi2(which=w))
+        
+        self.chi2, self.chi2_al, self.chi2_ac = chi2
+        return "Chi-squared values computed for 2D, AL, and AC PSFs."
+    
+    def GoF(self, which: str = '2d'):
+        """
+        Compute the goodness-of-fit statistic based on the chi-squared values.
+        
+        The GoF statistic is defined as:
+        
+        ... math::
+            GoF = sqrt(9*DOF/2) * ((chi2/DOF)^(1/3) - 1 + 2/(9*DOF))
+    
+        where DOF is the degrees of freedom (N - P) and chi2 is the chi-squared 
+        value for the chosen PSF fit.
+        """
+        self.cube_chi2()  # Ensure chi-squared values are computed
+        match which:
+            case '2d':
+                stat = self.chi2
+            case 'al':
+                stat = self.chi2_al
+            case 'ac':
+                stat = self.chi2_ac
+            case _:
+                raise ValueError("Parameter 'which' must be one of '2d', 'al', or 'ac'.")
+
+        return _np.sqrt(9*self.dof/2) * (stat**(1/3) - 1 + 2/(9*self.dof))
+
+    def _uwe(self):
+        """
+        Compute the unit weight error (UWE) for the astrometric fit of a 
+        5-parameter solution.
+
+        UWE is defined as the square root of the reduced chi-squared statistic.
+        """
+        n_params = 5
+        astrometric_chi2_al = self.chi2_al or self._compute_chi2(which='al')
+        self.uwe = _np.sqrt(astrometric_chi2_al / (self.N - n_params))
+        return self.uwe.copy()
+    
+    def fit(self, order: int = 1, which: str = "2d"):
+        """
+        Fit the harmonic decomposition to the logarithm of the GoF reduced χ^2 
+        values as a function of phi.
+        
+        Parameters
+        ----------
+        order : int, optional
+            The order of the harmonic decomposition. Defaults to 2 (i.e., up to
+            the second harmonic).
+        """
+        y = _np.log(self.GoF(which=which))
+        X = self.phi.copy()
 
         fit = fit_data_points(
-            data=np.log(chiphi[:, 0]),
-            x_data=chiphi[:, 1],
-            method=harmonic_decomposition,
+            data=y,
+            x_data=X,
+            method=harmonic_decomposition(order=order),
         )
-        _, c2, s2 = fit.coeffs
-        gof_amplitude = np.sqrt(c2**2 + s2**2)
-        gof_phase = np.arctan2(s2, c2) * _u.rad.to(_u.deg)
+        _, c2, s2, *__ = fit.coeffs
 
-    if show:
+        self._fit = fit
+        self.gof_amp = _np.sqrt(c2**2 + s2**2)
+        self.gof_phase = _np.arctan2(s2, c2) * _u.rad.to(_u.deg)
+    
+    def frac_multi_peak(self, verbose:bool = False):
+        """
+        Calculate the fraction of PSFs in the observed cube that have multiple
+        peaks above a certain threshold.
+        
+        Parameters
+        ----------
+        verbose : bool, optional
+            If True, print the number of peaks for each PSF. Defaults to False.
+        
+        Returns
+        -------
+        float
+            The fraction of PSFs in the cube that have multiple peaks above the 
+            specified threshold.
+        """
+        for psfd in self.cube:
+            psf = psfd.psf_al
+            peaks_al, _ = find_peaks(psf, height=0.1*psf.max())
+            if verbose:
+                print(f"Phi: {psfd.phi:.1f} deg - Peaks AL: {len(peaks_al)}")
+            if len(peaks_al) > 1:
+                mcounter += 1
+                continue
+        ipd_frac_multipeak = mcounter / len(self.cube)
+        return ipd_frac_multipeak
+        
+
+    def show_fit(self):
         from grasp import plots
-
-        _plt.ion()
+        
+        if len(self._fit.coeffs) > 5:
+            legenon = False
+        else:
+            legenon = True
 
         fig, fax, _ = plots.regressionPlot(
-            fit,
+            self._fit,
             f_type="datapoint",
             title=r"$A_{ipd}$"
-            + f"={gof_amplitude:.1e}   |   "
+            + f"={self.gof_amp:.2e}   |   "
             + r"$\varphi_{ipd}$"
-            + f"={gof_phase:.2f} deg",
+            + f"={self.gof_phase:.1f} deg",
             xlabel=r"Scan Angle $\varphi$ [deg]",
+            legend=legenon
         )
 
-        label = plots._kde_labels(fit.kind, fit.coeffs)  # type: ignore
-        label = (
-            label.replace("Custom", "Harmonic")
-            .replace("A", "c_0")
-            .replace("B", "c_2")
-            .replace("C", "s_2")
-        )
-        fax.legend([fax.lines[0]], [label], loc="best", fontsize="medium")
+        if legenon:
+            label = plots._kde_labels(self._fit.kind, self._fit.coeffs)  # type: ignore
+            label = (
+                label.replace("Custom", "Harmonic")
+                .replace("A", "c_0")
+                .replace("B", "c_2")
+                .replace("C", "s_2")
+            )
+            fax.legend([fax.lines[0]], [label], loc="best", fontsize="medium")
+
         fig.show()
 
-    return gof_amplitude, gof_phase
+    def _compute_chi2(self, which: str = "2d"):
+        """
+        Compute the reduced chi-squared statistic for the PSF fit of each 
+        observation in the cube.
+
+        Parameters
+        ----------
+        which : str, optional
+            Which PSF to use for the fit. Options are "2d", "al" or "ac".
+
+        Returns
+        -------
+        np.ndarray
+            An array of chi-squared values for each observation in the cube.
+        """
+        attr = f'psf_{which}'
+        expected = getattr(self.calibration, attr)
+        errors = _np.ones_like(expected)
+
+        chi2 = []
+        phi  = []
+        for obs in self.cube:
+            psf = getattr(obs, attr)
+            chi2.append(_np.sum(((psf - expected)/errors)**2) / self.dof)
+            phi.append(obs.phi)
+
+        chiphi = _np.array(list(zip(chi2, phi)))
+        chiphi = chiphi[_np.argsort(chiphi[:, 1])]
+
+        if self.phi is None:
+            self.phi = chiphi[:,1].copy()
+
+        return chiphi[:,0]
+    
+    @property
+    def ipd(self):
+        """
+        Dictionary for the IPD model of the TN
+        
+        Returns
+        -------
+        dict
+            A dictionary containing the IPD model parameters.
+        """
+        dt = {}
+        dt['fit'] = self._fit
+        dt['gof_amplitude'] = self.gof_amp
+        dt['gof_phase'] = self.gof_phase
+        dt['distance_mas'] = self.cube[0].primary_meta['DISTMAS']
+        dt['central_mag'] = self.cube[0].primary_meta['M1']
+        dt['secondary_mag'] = self.cube[0].primary_meta['M2']
+        return dt
+    
+    def __call__(self, order: int = 1, which: str = '2d'):
+        """
+        """
+        self.cube_chi2()
+        self.fit(order=order, which=which)
+        self.frac_multi_peak()
+        return self
+    
+    def __repr__(self):
+        txt = f"IPD(tn={self.tn},"
+        if self.gof_amp is not None:
+            txt += f" gof_amp={self.gof_amp:.2e},"
+        if self.gof_phase is not None:
+            txt += f" gof_phase={self.gof_phase:.1f} deg"
+        txt += ")"
+        return txt
+    
+    def __str__(self):
+        return str(self.ipd)
+
+
+def run_IPD_analysis(tn: str, mp_threshold: float = 0.4) -> tuple[float, float, float, float]:
+    """
+    Run the IPD analysis for a given transit name.
+    
+    Parameters
+    ----------
+    tn : str
+        The transit name for which to run the IPD analysis.
+    """
+    cube = _ut.load_psf(tn)
+    gof_amplitude, gof_phase = ipd_gof_harmonic(cube, show=False)
+    al_fmp = ipd_frac_multipeak(cube, axis="al", threshold=mp_threshold, show=False)
+    ac_fmp = ipd_frac_multipeak(cube, axis="ac", threshold=mp_threshold, show=False)
+    # print(f"IPD Goodness-of-Fit Amplitude: {gof_amplitude:.2e}")
+    # print(f"IPD Goodness-of-Fit Phase: {gof_phase:.2f} deg")
+    # print(f"IPD Fraction of Multi-Peak (AL): {al_fmp:.2%}")
+    # print(f"IPD Fraction of Multi-Peak (AC): {ac_fmp:.2%}")
+
+    del cube
+    gc.collect()
+
+    return gof_amplitude, gof_phase, al_fmp, ac_fmp
 
 
 def ipd_frac_multipeak(
-    cube: _ut.PSFData, threshold: float = 0.4, show: bool = False
+    cube: _ut.PSFCube, axis: str = "al", threshold: float = 0.4
 ) -> float:
     """
     Calculate the fraction of PSFs in the observed cube that have multiple peaks above a certain threshold.
+    
+    Parameters
+    ----------
+    cube : _ut.PSFCube
+        The input PSF cube containing multiple PSF observations.
+    axis : str
+        Which PSF to analyze: 'al' for along-scan, 'ac' for across-scan. Defaults to 'al'.
+    threshold : float
+        The threshold above which to consider a local maximum useful. It is given as a fraction
+        of the maximum value of the PSF. Defaults to 0.4 (40% of the maximum).
+
+    Returns
+    -------
+    float
+        The fraction of PSFs in the cube that have multiple peaks above the specified threshold.
     """
     maxs = []
-    for img in cube:
-        maxs.append(find_local_maxima(img, which="al", threshold=threshold))
+    for psf in cube:
+        maxs.append(find_local_maxima(psf, which=axis, threshold=threshold))
     mcounter = 0
     for maxima in maxs:
         if len(maxima) > 1:
             mcounter += 1
             continue
     ipd_frac_multipeak = mcounter / len(cube)
-    if show:
-        _ut.create_interactive_psf_plot(cube)
     return ipd_frac_multipeak
-
-
-def get_chi_phi(
-    observed_cube: _ut.PSFData,
-    calibrated_psf: _ut.PSFData,
-    errors: _xt.Array = None,
-    ddof: int = 0,
-) -> tuple[_xt.Array, _xt.Array]:
-    """
-    Calculate the chi-squared and phi values for each PSF in the observed cube.
-    """
-    chi_arr = []
-    phi_arr = []
-    exp = calibrated_psf.psf_2d
-    for i in range(len(observed_cube)):
-        psf_i = observed_cube[i].psf_2d
-        phi_i = observed_cube[i].phi
-        chi_i = _reduced_chi_squared(psf_i, exp, errors=errors, ddof=ddof)
-        chi_arr.append(chi_i)
-        phi_arr.append(phi_i)
-    with _xp.NumpyContext() as np:
-        chiphi = np.array(list(zip(chi_arr, phi_arr)))
-        chiphi = chiphi[np.argsort(chiphi[:, 1])]
-    return chiphi
-
-
-def find_local_maxima(
-    psf: _xt.Array | _ut.PSFData,
-    which: str = "al",
-    threshold: float = 0.4,
-    show: bool = False,
-) -> _xt.Array:
-    """
-    Find local maxima in a 2D PSF array above a certain threshold.
-
-    Parameters
-    ----------
-    psf : _xt.Array or _ut.PSFData
-        The input PSF data. If a _ut.PSFData object is provided, the AL PSF array
-        will be extracted from it.
-    which : str
-        Which PSF to analyze: 'al' for along-scan, 'ac' for across-scan, 'both' for both.
-    threshold : float
-        The threshold above which to consider a local maximum usefull. It is given as a fraction
-        of the maximum value of the PSF. Defaults to 0.4 (40% of the maximum).
-    show : bool
-        Whether to show a plot of the PSF and its local maxima.
-
-    Returns
-    -------
-    _xt.Array
-        An array of (x, value), where `x` is the pixel coordinate of the maxima and `value` its value.
-    """
-    if isinstance(psf, _ut.PSFData):
-        if which == "al":
-            psf = psf.psf_x
-        elif which == "ac":
-            psf = psf.psf_y
-        elif which == "both":
-            maxima_al = find_local_maxima(psf, which="al", show=show)
-            maxima_ac = find_local_maxima(psf, which="ac", show=show)
-            return maxima_al, maxima_ac
-        else:
-            raise ValueError("Parameter 'which' must be one of 'al', 'ac', or 'both'.")
-    elif psf.ndim != 1:
-        raise ValueError("Input psf must be a 1D array or a _ut.PSFData object.")
-    # Now psf is guaranteed to be a 1D array
-    idx_f = psf.shape[0]
-    maxima = []
-    for ix in range(1, idx_f - 1):
-        p_i = psf[ix]
-        p_i_1 = psf[ix - 1]
-        p_i_2 = psf[ix + 1]
-        if (p_i > p_i_1 or p_i == p_i_1) and p_i > p_i_2:
-            if p_i > threshold * psf.max():
-                maxima.append((ix, p_i))
-            else:
-                continue
-    if show:
-        _plt.figure()
-        _plt.plot(psf, label="PSF")
-        _plt.scatter(*zip(*maxima), color="red", label="Maxima")
-        _plt.legend()
-        _plt.title("Local Maxima in PSF")
-        _plt.xlabel("Pixel")
-        _plt.ylabel("Intensity")
-        _plt.grid()
-    return maxima
-
-
-def _reduced_chi_squared(
-    observed: _xt.Array,
-    expected: _xt.Array,
-    errors: _xt.Optional[_xt.Array] = None,
-    ddof: int = 0,
-) -> float:
-    """
-    Calculate the reduced chi-squared statistic.
-    """
-    with _xp.NumpyContext() as np:
-        if errors is None:
-            errors = np.ones_like(observed)
-        chi_squared = np.sum(((observed - expected) / errors) ** 2)
-    return chi_squared / (len(observed) - ddof)
-
-__all__ = [
-    "ipd_gof_harmonic",
-    "ipd_frac_multipeak", 
-    "get_chi_phi",
-    "find_local_maxima",
-    "_reduced_chi_squared"
-]

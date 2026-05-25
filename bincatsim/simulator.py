@@ -146,6 +146,18 @@ class GaiaSimulator:
         ----------
         ccd : CCD, optional
             The CCD to use for the observation. If not provided, the default CCD will be used.
+        read_out_noise : bool, optional
+            Whether to add read-out noise to the images. Default is False.
+        shot_noise : bool, optional
+            Whether to add photon shot noise to the images. Default is False.
+        map_dtype : str, optional
+            Data type for the convolved maps. Default is "float32". Can be "float
+            32" or "float64".
+            
+        Returns
+        -------
+        tn : str
+            The tracking number of the observation, which corresponds to the folder name where the data is saved
         """
         if ccd is None:
             ccd = self.ccd
@@ -194,21 +206,21 @@ class GaiaSimulator:
                 img, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True
             )
             self._logger.info(
-                f"Image {i:04d}: Convolution complete at angle {phi:.2f} degrees."
+                f"Image {i:05d}: Convolution complete at angle {phi:.2f} degrees."
             )
 
             # ---- Shot Noise ---- #
             if shot_noise:
                 noisy = _np.random.poisson(convolved).astype(_np.float32)
                 convolved = noisy
-                self._logger.info(f"Image {i:04d}: photon shot noise added.")
+                self._logger.info(f"Image {i:05d}: photon shot noise added.")
             # ------------------- #
 
             psf_2d, _, _ = ccd.sample_psf(psf=convolved)
-            self._logger.info(f"Image {i:04d}: PSF read-out complete (binning).")
+            self._logger.info(f"Image {i:05d}: PSF read-out complete (binning).")
 
             self._logger.debug(
-                f"Image {i:04d}: shifting map based on sources distance."
+                f"Image {i:05d}: shifting map based on sources distance."
             )
             if self.distance > 450:
                 if phi < 30.0 or phi >= 330.0:
@@ -231,11 +243,11 @@ class GaiaSimulator:
                 )
                 ron[ron < 0] = 0
                 psf_2d += ron
-                self._logger.info(f"Image {i:04d}: read-out noise added.")
+                self._logger.info(f"Image {i:05d}: read-out noise added.")
             # ------------------------ #
 
             psf_x, psf_y = computeXandYpsf(psf=psf_2d)
-            self._logger.info(f"Image {i:04d}: PSF X and Y computed.")
+            self._logger.info(f"Image {i:05d}: PSF X and Y computed.")
             final = (psf_2d, psf_x, psf_y)
 
             with fits.HDUList() as hdul:
@@ -243,8 +255,8 @@ class GaiaSimulator:
                 hdul.append(fits.ImageHDU(final[1], name="PSF_X"))
                 hdul.append(fits.ImageHDU(final[2], name="PSF_Y"))
                 hdul.append(fits.ImageHDU(convolved, name="HighRes obs", header=h2))
-                hdul.writeto(os.path.join(datapath, f"{i:04d}.fits"), overwrite=True)
-            self._logger.info(f"Image {i:04d}: FITS file saved.")
+                hdul.writeto(os.path.join(datapath, f"{i:05d}.fits"), overwrite=True)
+            self._logger.info(f"Image {i:05d}: FITS file saved.")
             del convolved, final
             gc.collect()
 
@@ -277,7 +289,6 @@ class GaiaSimulator:
         gc.collect()
 
         self._logger.info("Observation complete.")
-        self._update_record_file(tn)
         self.is_observed = True
 
         return tn
@@ -403,52 +414,6 @@ class GaiaSimulator:
         dy = yi - yc
         phi = (xp.np.arctan2(dy, dx)) % (2 * xp.np.pi) * _u.rad
         return phi.to_value(_u.deg)
-
-    def save_simulation_parameters(self, tn: str, other_params: dict[str, _xt.Any] = None):
-        """
-        Save the simulation parameters to a text file for future reference.
-
-        Parameters
-        ----------
-        tn : str
-            The tracking number of the simulation, used to name the parameter file.
-        """
-        import yaml
-
-        params = {
-            "MAGNITUDES": {
-                "central_star": {
-                    "M":self.M1,
-                    "photon_flux": self.central_star_flux
-                },
-                "companion_star": {
-                    "M": self.M2,
-                    "photon_flux": self.comp_star_flux
-                },
-                "calibration": self._Mtot
-            },
-            "SPACIAL PARAMETERS": {
-                "distance_mas": self.distance,
-                "spanned_angle_deg": self.angle.value,
-                "map_shape_pixels": self.map_shape,
-            },
-            "SPECTRAL PARAMETERS": {
-                "band": self._bands["band"][0],
-                "wavelength":
-                    f"{self._bands['wavelength'][0].to_value(_u.nm)} - "
-                    f"{self._bands['wavelength'][-1].to_value(_u.nm)} nm",
-                "zeropoint_Jy": self._bands["zero_point"][0].value,
-                "bandwidth_nm": self._bands["bandwidth"][0].to_value(_u.nm),
-            }
-        }
-        
-        if other_params is not None:
-            params.update(other_params)
-
-        with open(SIMULATION_PARAMETERS_PATH(tn), "w") as f:
-            yaml.dump(params, f)
-
-        self._logger.info("Simulation parameters saved.")
 
     def _create_base_map(self):
         """
@@ -593,26 +558,34 @@ class GaiaSimulator:
             _plt.show()
         return ring_mask
     
-    def _update_record_file(self, tn: str):
+    def update_record_file(self, tn: str, other_params: dict[str,_xt.Any] = None) -> None:
         """
         Update the record file with the current binary system parameters.
         """
         import pandas as pd
 
         record_path = os.path.join(SIMPATH, "simulations_record.csv")
-        df = pd.DataFrame({
+
+        basedict ={
             "TN": [tn],
             "M1": [self.M1],
             "M2": [self.M2],
             "G" : [self._Mtot],
             "D_mas": [self.distance],
             "φ_max": [self.angle.value],
-        })
+        }
+
+        if other_params:
+            basedict.update(other_params)
+
+        df = pd.DataFrame(basedict)
+
         if os.path.exists(record_path):
             existing_df = pd.read_csv(record_path)
             df = pd.concat([existing_df, df], ignore_index=True)
+
         df.to_csv(record_path, index=False)
-            
+
         self._logger.info("Simulation record file updated.")
 
     def __repr__(self):
