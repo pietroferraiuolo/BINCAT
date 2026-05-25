@@ -1,4 +1,5 @@
 data/
+typings/*
 **/__pycache__/
 **/*.pyc
 *.pyc

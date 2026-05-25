@@ -1,13 +1,11 @@
-import gc
 import numpy as _np
-from inspect import Parameter, Signature
-import xupy as _xp
-from bincatsim import utils as _ut
 import astropy.units as _u
-from xupy import typings as _xt
-from matplotlib import pyplot as _plt
+from pprint import pformat as _pformat
+from inspect import Parameter, Signature
+from .. import utils as _ut
 from grasp.stats import fit_data_points
-from scipy.signal import find_peaks
+from grasp.plots import histogram
+from scipy.signal import find_peaks, argrelextrema
 
 
 def _harmonic_decomposition(x, *coeffs):
@@ -204,7 +202,7 @@ class IPD():
         self.uwe = _np.sqrt(astrometric_chi2_al / (self.N - n_params))
         return self.uwe.copy()
     
-    def fit(self, order: int = 1, which: str = "2d"):
+    def harmonic_fit(self, order: int = 1, which: str = "2d"):
         """
         Fit the harmonic decomposition to the logarithm of the GoF reduced χ^2 
         values as a function of phi.
@@ -228,34 +226,59 @@ class IPD():
         self._fit = fit
         self.gof_amp = _np.sqrt(c2**2 + s2**2)
         self.gof_phase = _np.arctan2(s2, c2) * _u.rad.to(_u.deg)
+        
+        return self.gof_amp, self.gof_phase
     
-    def frac_multi_peak(self, verbose:bool = False):
+    def frac_multi_peak(
+        self,
+        threshold: float = 0.1,
+        epsilon: float = 1e-6,
+        verbose: bool = False
+     ) -> tuple[float, float]:
         """
         Calculate the fraction of PSFs in the observed cube that have multiple
         peaks above a certain threshold.
         
         Parameters
         ----------
+        threshold : float, optional
+            The threshold value for identifying multiple peaks. Defaults to 0.1.
+        epsilon : float, optional
+            Tolerance value for the chi-squared threshold. Defaults to 1e-6.
         verbose : bool, optional
             If True, print the number of peaks for each PSF. Defaults to False.
         
         Returns
         -------
-        float
+        (ipd_frac_multi_peak, ipd_frac_badfit) : tuple
             The fraction of PSFs in the cube that have multiple peaks above the 
-            specified threshold.
+            specified threshold and the fraction of PSFs that are considered bad fits.
         """
+        _, pt = self._find_chi_threshold(epsilon=epsilon, verbose=verbose)
+        
+        mcounter: int = 0
+        bfcounter: int = 0
+
         for psfd in self.cube:
             psf = psfd.psf_al
-            peaks_al, _ = find_peaks(psf, height=0.1*psf.max())
-            if verbose:
-                print(f"Phi: {psfd.phi:.1f} deg - Peaks AL: {len(peaks_al)}")
+            peaks_al, _ = find_peaks(psf, height=threshold*psf.max())
+
             if len(peaks_al) > 1:
                 mcounter += 1
-                continue
-        ipd_frac_multipeak = mcounter / len(self.cube)
-        return ipd_frac_multipeak
-        
+            
+            if psfd.phi <= pt:
+                bfcounter += 1
+
+            if verbose:
+                print(f"Phi: {psfd.phi:.1f} deg - Peaks AL: {len(peaks_al)}")
+
+        ipd_frac_multipeak = mcounter / self.N
+        ipd_frac_badfit   = bfcounter / self.N
+
+        self.ipd_frac_multipeak = ipd_frac_multipeak
+        self.ipd_frac_badfit = ipd_frac_badfit
+
+        return ipd_frac_multipeak, ipd_frac_badfit
 
     def show_fit(self):
         from grasp import plots
@@ -287,6 +310,43 @@ class IPD():
             fax.legend([fax.lines[0]], [label], loc="best", fontsize="medium")
 
         fig.show()
+        
+    def _find_chi_threshold(self, epsilon: float = 1e-6, verbose: bool = False):
+        """
+        Find the threshold in chi-squared values that separates good fits from bad fits.
+        
+        This is done by looking for a significant increase in chi-squared values as a 
+        function of phi, which indicates a transition from good to bad fits.
+        
+        Parameters
+        ----------
+        epsilon : float, optional
+            tolerance value for the chi-squared threshold. Defaults to 1e-6.
+        verbose : bool, optional
+            If True, print the phi value at the chi-squared threshold. Defaults 
+            to False.
+        
+        Returns
+        -------
+        (chi_threshold, phi_threshold) : tuple
+            The chi-squared threshold value that separates good fits from bad fits,
+            with the corresponding ``phi`` value.
+        """
+        h = histogram(self.chi2_al, out=True, bins='detailed', dont_show=True)['h']
+        hp = h['counts']
+        hp_x = h['bins']
+        polyfit = fit_data_points(hp, x_data=hp_x, method='poly2', plot=False)
+        min = argrelextrema(polyfit.y, _np.less)
+        ythresh = polyfit.x[min]
+
+        for k, chival in enumerate(self.chi2_al):
+            if abs(chival - ythresh) < epsilon:
+                if verbose:
+                    print(f"Phi at chi2 threshold: {self.phi[k]:.2f} degrees ({k})")
+                break
+
+        phithresh = self.phi[k]
+        return ythresh, phithresh
 
     def _compute_chi2(self, which: str = "2d"):
         """
@@ -336,17 +396,28 @@ class IPD():
         dt['fit'] = self._fit
         dt['gof_amplitude'] = self.gof_amp
         dt['gof_phase'] = self.gof_phase
+        dt['ipd_frac_multipeak'] = self.ipd_frac_multipeak
+        dt['ipd_frac_badfit'] = self.ipd_frac_badfit
         dt['distance_mas'] = self.cube[0].primary_meta['DISTMAS']
         dt['central_mag'] = self.cube[0].primary_meta['M1']
         dt['secondary_mag'] = self.cube[0].primary_meta['M2']
         return dt
     
-    def __call__(self, order: int = 1, which: str = '2d'):
+    def __call__(
+        self,
+        order: int = 1,
+        which: str = '2d',
+        threshold: float = 0.1,
+        epsilon: float = 1e-6,
+        verbose: bool = False
+    ) -> "IPD":
         """
+        Run the full IPD analysis pipeline, including chi-squared computation,
+        harmonic fitting, and multi-peak fraction calculation.
         """
         self.cube_chi2()
-        self.fit(order=order, which=which)
-        self.frac_multi_peak()
+        self.harmonic_fit(order=order, which=which)
+        self.frac_multi_peak(threshold, epsilon, verbose)
         return self
     
     def __repr__(self):
@@ -355,65 +426,12 @@ class IPD():
             txt += f" gof_amp={self.gof_amp:.2e},"
         if self.gof_phase is not None:
             txt += f" gof_phase={self.gof_phase:.1f} deg"
+        if self.ipd_frac_multipeak is not None:
+            txt += f" ipd_frac_multipeak={self.ipd_frac_multipeak:.2%},"
+        if self.ipd_frac_badfit is not None:
+            txt += f" ipd_frac_badfit={self.ipd_frac_badfit:.2%}"
         txt += ")"
         return txt
     
-    def __str__(self):
-        return str(self.ipd)
-
-
-def run_IPD_analysis(tn: str, mp_threshold: float = 0.4) -> tuple[float, float, float, float]:
-    """
-    Run the IPD analysis for a given transit name.
-    
-    Parameters
-    ----------
-    tn : str
-        The transit name for which to run the IPD analysis.
-    """
-    cube = _ut.load_psf(tn)
-    gof_amplitude, gof_phase = ipd_gof_harmonic(cube, show=False)
-    al_fmp = ipd_frac_multipeak(cube, axis="al", threshold=mp_threshold, show=False)
-    ac_fmp = ipd_frac_multipeak(cube, axis="ac", threshold=mp_threshold, show=False)
-    # print(f"IPD Goodness-of-Fit Amplitude: {gof_amplitude:.2e}")
-    # print(f"IPD Goodness-of-Fit Phase: {gof_phase:.2f} deg")
-    # print(f"IPD Fraction of Multi-Peak (AL): {al_fmp:.2%}")
-    # print(f"IPD Fraction of Multi-Peak (AC): {ac_fmp:.2%}")
-
-    del cube
-    gc.collect()
-
-    return gof_amplitude, gof_phase, al_fmp, ac_fmp
-
-
-def ipd_frac_multipeak(
-    cube: _ut.PSFCube, axis: str = "al", threshold: float = 0.4
-) -> float:
-    """
-    Calculate the fraction of PSFs in the observed cube that have multiple peaks above a certain threshold.
-    
-    Parameters
-    ----------
-    cube : _ut.PSFCube
-        The input PSF cube containing multiple PSF observations.
-    axis : str
-        Which PSF to analyze: 'al' for along-scan, 'ac' for across-scan. Defaults to 'al'.
-    threshold : float
-        The threshold above which to consider a local maximum useful. It is given as a fraction
-        of the maximum value of the PSF. Defaults to 0.4 (40% of the maximum).
-
-    Returns
-    -------
-    float
-        The fraction of PSFs in the cube that have multiple peaks above the specified threshold.
-    """
-    maxs = []
-    for psf in cube:
-        maxs.append(find_local_maxima(psf, which=axis, threshold=threshold))
-    mcounter = 0
-    for maxima in maxs:
-        if len(maxima) > 1:
-            mcounter += 1
-            continue
-    ipd_frac_multipeak = mcounter / len(cube)
-    return ipd_frac_multipeak
+    def __str__(self):        
+        return _pformat(self.ipd, sort_dicts=False, indent=2)

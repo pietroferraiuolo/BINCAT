@@ -432,7 +432,7 @@ def display_psf(
     psf: _xt.Array,
     mode: str = "all",
     save: str | bool = False,
-    **kwargs: dict[str, _xt.Any],
+    **kwargs: dict[str, _xt.Any], # type: ignore
 ) -> None:
     """
     Display the input PSF.
@@ -629,7 +629,7 @@ def convolve_fft(
     kernel: _xt.Array,
     dtype = _xp.float,
     normalize_kernel: bool = True,
-    **kwargs: dict[str, _xt.Any],
+    **kwargs: dict[str, _xt.Any], # type: ignore
 ) -> _xt.Array:
     """
     Convolve an image with a kernel using FFT on GPU.
