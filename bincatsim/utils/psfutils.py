@@ -1,3 +1,10 @@
+import os as _os
+import matplotlib.pyplot as _plt
+from astropy.visualization import (
+    ImageNormalize,
+    MinMaxInterval,
+    LogStretch,
+)
 from collections import OrderedDict as _OrderedDict
 from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 from threading import Lock as _Lock
@@ -456,14 +463,6 @@ def display_psf(
     **kwargs : dict, optional
         Additional keyword arguments to pass to the display function (`plt.imshow`).
     """
-    import os as _os
-    import matplotlib.pyplot as _plt
-    from astropy.visualization import (
-        ImageNormalize,
-        MinMaxInterval,
-        LogStretch,
-    )
-
     try:
         if isinstance(psf, PSFData):
             psf_x = psf.psf_al

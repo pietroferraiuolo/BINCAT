@@ -275,12 +275,12 @@ class IPD():
         ipd_frac_multipeak = mcounter / self.N
         ipd_frac_badfit   = bfcounter / self.N
 
-        self.ipd_frac_multipeak = ipd_frac_multipeak
-        self.ipd_frac_badfit = ipd_frac_badfit
+        self.frac_multipeak = ipd_frac_multipeak
+        self.frac_badfit = ipd_frac_badfit
 
         return ipd_frac_multipeak, ipd_frac_badfit
 
-    def show_fit(self):
+    def show_harmonic_fit(self):
         from grasp import plots
         
         if len(self._fit.coeffs) > 5:
@@ -309,6 +309,33 @@ class IPD():
             )
             fax.legend([fax.lines[0]], [label], loc="best", fontsize="medium")
 
+        fig.show()
+    
+    def show_polyfit(self,):
+        """
+        Shows the polynomial fit to the chi-squared values distribution.
+        """
+        
+        from grasp import plots
+        
+        fig, fax, _ = plots.regressionPlot(
+            self._polyfit,
+            f_type="datapoint",
+            title=rf"$\chi_{{\nu,\,AL}}^2$ Polynomial Fit",
+            xlabel=r"$\chi_{\nu,\,AL}^2 $",
+            size=15,
+            grid=True,
+            pc='blue'
+        )
+        
+        label = plots._kde_labels(self._polyfit.kind, self._polyfit.coeffs)  # type: ignore
+        label = (
+            label.replace("Polynomial of degree 2", r"$ax^2 + bx + c$")
+            .replace("A", "a")
+            .replace("B", "b")
+            .replace("C", "c")
+        )
+        fax.legend([fax.lines[0]], [label], loc="best", fontsize="medium")
         fig.show()
         
     def _find_chi_threshold(self, epsilon: float = 1e-6, verbose: bool = False):
@@ -346,6 +373,11 @@ class IPD():
                 break
 
         phithresh = self.phi[k]
+        
+        self._chi2_threshold = ythresh
+        self._phi_threshold = phithresh
+        self._polyfit = polyfit
+
         return ythresh, phithresh
 
     def _compute_chi2(self, which: str = "2d"):

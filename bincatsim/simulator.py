@@ -9,7 +9,7 @@ from .instruments import CCD
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
 from .utils.logging import SystemLogger as _SL
-from .core.root import OBS_DATA_PATH, SIMPATH, SIMULATION_PARAMETERS_PATH
+from .core.root import OBS_DATA_PATH, SIMPATH
 from opticalib.ground.osutils import _header_from_dict as hfd
 
 
@@ -321,7 +321,7 @@ class GaiaSimulator:
         )
         return self.ccd.integration_time[-1]  # 2 linee
 
-    def show_system(self, out: bool = False, **kwargs: dict[str, _xt.Any]) -> None:
+    def show_system(self, out: bool = False, **kwargs: dict[str, _xt.Any]) -> None: # type: ignore
         """
         Plots the fits image of the binary system's cube (A random image of the cube).
 
@@ -558,7 +558,7 @@ class GaiaSimulator:
             _plt.show()
         return ring_mask
     
-    def update_record_file(self, tn: str, other_params: dict[str,_xt.Any] = None) -> None:
+    def update_record_file(self, tn: str, other_params: dict[str,_xt.Any] = None) -> None: # type: ignore
         """
         Update the record file with the current binary system parameters.
         """
