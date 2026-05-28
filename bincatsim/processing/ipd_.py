@@ -95,7 +95,7 @@ class IPD():
         Compute the unit weight error (UWE) for the astrometric fit of a 5-parameter solution.
     ``fit(degree=2)``
         Fit a polynomial of given degree to the chi-squared values as a function of phi.
-    ``__call__(statistic=None)``
+    ``__call__()``
         Alias for the fit method, allowing the object to be called directly to perform the fit.
     """
     def __init__(
@@ -122,7 +122,7 @@ class IPD():
         self.dof = self.N - self.P
         
         ## Computed ##
-        self.chi2 = None
+        self.chi2_2d = None
         self.chi2_al = None
         self.chi2_ac = None
         self.phi = None
@@ -130,6 +130,9 @@ class IPD():
         self.gof_amp = None
         self.gof_phase = None
         self.uwe = None
+        
+        # pre-compute chi2 values for all PSFs in the cube
+        self._compute_cube_chi2()
 
     def set_tn(self, tn: str):
         """
@@ -145,7 +148,7 @@ class IPD():
         self.calibration = self.cube.calibration
         self.N = len(self.cube)
         self.dof = self.N - self.P
-        self.chi2 = None
+        self.chi2_2d = None
         self.chi2_al = None
         self.chi2_ac = None
         self.phi = None
@@ -153,8 +156,9 @@ class IPD():
         self.gof_amp = None
         self.gof_phase = None
         self.uwe = None
+        self._compute_cube_chi2()  # re-compute chi2 values for the new cube
 
-    def cube_chi2(self):
+    def _compute_cube_chi2(self):
         """
         Compute the reduced chi-squared statistic for the PSF fit of each observation in the cube.
         """
@@ -162,7 +166,7 @@ class IPD():
         for w in ['2d', 'al', 'ac']:
             chi2.append(self._compute_chi2(which=w))
         
-        self.chi2, self.chi2_al, self.chi2_ac = chi2
+        self.chi2_2d, self.chi2_al, self.chi2_ac = chi2
         return "Chi-squared values computed for 2D, AL, and AC PSFs."
     
     def GoF(self, which: str = '2d'):
@@ -177,10 +181,9 @@ class IPD():
         where DOF is the degrees of freedom (N - P) and chi2 is the chi-squared 
         value for the chosen PSF fit.
         """
-        self.cube_chi2()  # Ensure chi-squared values are computed
         match which:
             case '2d':
-                stat = self.chi2
+                stat = self.chi2_2d
             case 'al':
                 stat = self.chi2_al
             case 'ac':
@@ -210,10 +213,15 @@ class IPD():
         Parameters
         ----------
         order : int, optional
-            The order of the harmonic decomposition. Defaults to 2 (i.e., up to
-            the second harmonic).
+            The order of the harmonic decomposition. Defaults to 1, i.e., up to
+            the first harmonic:
+            ... math::
+                f(φ) = c_0 + c_2 cos(2φ) + s_2 sin(2φ)
+        which : str, optional
+            The PSF fit to use for the harmonic decomposition. 
+            Must be one of '2d', 'al', or 'ac'. Defaults to '2d'.
         """
-        y = _np.log(self.GoF(which=which))
+        y = _np.log(getattr(self, f"chi2_{which}").copy())
         X = self.phi.copy()
 
         fit = fit_data_points(
@@ -237,7 +245,7 @@ class IPD():
      ) -> tuple[float, float]:
         """
         Calculate the fraction of PSFs in the observed cube that have multiple
-        peaks above a certain threshold.
+        peaks in the AL LSF, above a certain threshold.
         
         Parameters
         ----------
@@ -434,6 +442,18 @@ class IPD():
         dt['central_mag'] = self.cube[0].primary_meta['M1']
         dt['secondary_mag'] = self.cube[0].primary_meta['M2']
         return dt
+
+    @property
+    def chi2(self):
+        """
+        Return the chi-squared values for the 2D, AL, and AC PSF fits.
+        
+        Returns
+        -------
+        np.ndarray
+            An array of chi-squared values for each observation in the cube.
+        """
+        return (getattr(self, f"chi_{x}").copy() for x in ['2d', 'al', 'ac'])
     
     def __call__(
         self,
@@ -447,7 +467,6 @@ class IPD():
         Run the full IPD analysis pipeline, including chi-squared computation,
         harmonic fitting, and multi-peak fraction calculation.
         """
-        self.cube_chi2()
         self.harmonic_fit(order=order, which=which)
         self.frac_multi_peak(threshold, epsilon, verbose)
         return self

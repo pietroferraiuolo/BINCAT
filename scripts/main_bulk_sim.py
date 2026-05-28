@@ -9,16 +9,25 @@ try:
 except Exception as e:
     pass
 
+# central = []
+# secondary = []
+# for c in range(5, 9):
+#     for s in range(c, min(9, c+4)):
+#         central.append(c)
+#         secondary.append(s)
+
+# couples = list(zip(central, secondary))
+
 central = []
 secondary = []
-for c in range(5, 20):
-    for s in range(c, min(20, c+4)):
-        central.append(c)
-        secondary.append(s)
+c = 7
+for s in range(c, min(11, c+4)):
+    central.append(c)
+    secondary.append(s)
 
 couples = list(zip(central, secondary))
 
-distances = np.arange(20, 221, 10) * u.mas
+distances = np.arange(138, 221, 2) * u.mas
 angle = 90 * u.deg
 
 ccd = bs.CCD(
@@ -28,21 +37,27 @@ ccd = bs.CCD(
 )
 
 def analyze_simulation(tn: str):
-    amp, phase, almp, acmp = bs.processing.run_IPD_analysis(tn, mp_threshold=0.15)
+    ipd = bs.IPD(tn)
+    ipd()
     return {
-        'gof_amp': amp,
-        'gof_phase': phase,
-        'al_multipeak': almp,
-        'ac_multipeak': acmp
+        'gof_amp': ipd.gof_amp,
+        'gof_phase': ipd.gof_phase,
+        'al_multipeak': ipd.frac_multipeak,
+        'ac_multipeak': 0.0,
+        'delta_m': None,
+        'frac_badfit': ipd.frac_badfit,
+        'chi2_threshold': ipd._chi2_threshold,
+        'phi_threshold': ipd._phi_threshold
     }
 
 if __name__=='__main__':
     
     print(f"Starting bulk simulation: {len(distances)*len(couples)} simulations to run.\n")
+    k=1
     for D in distances:
         for it, (c, s) in enumerate(couples):
             print(
-                f"{it+1}/{len(couples)}: Distance={D} ; central={c},"
+                f"[{k}/{len(distances)*len(couples)}] - ({it+1}/{len(couples)}) : Distance={D} ; central={c},"
                 f" secondary={s}", end="\n"
             )
 
@@ -56,7 +71,9 @@ if __name__=='__main__':
 
             tn = sim.observe()
             resdict = analyze_simulation(tn)
+            resdict['delta_m'] = s - c
             sim.update_record_file(tn, other_params=resdict)
 
             del sim
             gc.collect()
+            k += 1
