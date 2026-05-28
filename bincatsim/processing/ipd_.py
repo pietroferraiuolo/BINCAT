@@ -118,7 +118,7 @@ class IPD():
         
         ## Parameters ##
         self.P = fitted_parameters
-        self.N = len(self.cube)
+        self.N = _np.size(self.cube[0].psf_2d)
         self.dof = self.N - self.P
         
         ## Computed ##
@@ -146,7 +146,7 @@ class IPD():
         self.tn = tn
         self.cube = _ut.load_psf(tn)
         self.calibration = self.cube.calibration
-        self.N = len(self.cube)
+        self.N = _np.size(self.cube[0].psf_2d)
         self.dof = self.N - self.P
         self.chi2_2d = None
         self.chi2_al = None
@@ -233,7 +233,7 @@ class IPD():
 
         self._fit = fit
         self.gof_amp = _np.sqrt(c2**2 + s2**2)
-        self.gof_phase = _np.arctan2(s2, c2) * _u.rad.to(_u.deg)
+        self.gof_phase = _np.arctan2(s2, c2) * _u.rad.to(_u.deg) % 180
         
         return self.gof_amp, self.gof_phase
     
@@ -388,7 +388,7 @@ class IPD():
 
         return ythresh, phithresh
 
-    def _compute_chi2(self, which: str = "2d"):
+    def _compute_chi2(self, which: str = "2d", errors: float | None = None):
         """
         Compute the reduced chi-squared statistic for the PSF fit of each 
         observation in the cube.
@@ -405,7 +405,8 @@ class IPD():
         """
         attr = f'psf_{which}'
         expected = getattr(self.calibration, attr)
-        errors = _np.ones_like(expected)
+        if errors is None:
+            errors = expected #_np.ones_like(expected)
 
         chi2 = []
         phi  = []
@@ -453,7 +454,7 @@ class IPD():
         np.ndarray
             An array of chi-squared values for each observation in the cube.
         """
-        return (getattr(self, f"chi_{x}").copy() for x in ['2d', 'al', 'ac'])
+        return (getattr(self, f"chi2_{x}").copy() for x in ['2d', 'al', 'ac'])
     
     def __call__(
         self,

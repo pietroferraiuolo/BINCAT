@@ -125,6 +125,8 @@ class GaiaSimulator:
         self._logger.info(f"Companion star flux: {self.comp_star_flux} photons/s/cm².")
 
         self._base_map = self._create_base_map()
+        
+        self._noisegen = _np.random.Generator(_np.random.PCG64())
 
     def observe(
         self,
