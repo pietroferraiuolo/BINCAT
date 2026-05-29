@@ -1,40 +1,49 @@
+import os
 import gc
 import numpy as np
 import xupy as xp
 import bincatsim as bs
 from astropy import units as u
+from bincatsim.utils.read_config import resolve_bulk_simulation_config
 
 try:
     xp.set_device(1) # Set to 2nd GPU (gandalf)
 except Exception as e:
     pass
 
-# central = []
-# secondary = []
-# for c in range(5, 9):
-#     for s in range(c, min(9, c+4)):
-#         central.append(c)
-#         secondary.append(s)
+parfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parameters.yaml")
+config = resolve_bulk_simulation_config(parfile)
 
-# couples = list(zip(central, secondary))
+sm = config['starting_magnitude']
+dm = config['delta_mag']
 
 central = []
 secondary = []
-c = 7
-for s in range(c, min(11, c+4)):
-    central.append(c)
-    secondary.append(s)
+for c in range(sm):
+    for s in range(c, min(sm + dm, c + dm + 1)):
+        central.append(c)
+        secondary.append(s)
 
 couples = list(zip(central, secondary))
 
-distances = np.arange(138, 221, 2) * u.mas
-angle = 90 * u.deg
+
+distances = config['distances']
+angle = config['angle']
+shot_noise = config['shot_noise']
+ron = config['ron']
 
 ccd = bs.CCD(
     psf=bs.paths.PSF_FILE,
     pixel_scale_x=177*(u.mas/u.pixel),
     pixel_scale_y=59*(u.mas/u.pixel)
 )
+
+band_dict = {
+    'wavelength'    : ccd._passbands['lambda'],
+    'transmission'  : ccd._passbands['G'],
+    'name'          : ccd._bands['band'][0].lower(),
+    'zero_point'    : ccd._bands['zero_point'][0]
+}
 
 def analyze_simulation(tn: str):
     ipd = bs.IPD(tn)
@@ -52,28 +61,61 @@ def analyze_simulation(tn: str):
 
 if __name__=='__main__':
     
-    print(f"Starting bulk simulation: {len(distances)*len(couples)} simulations to run.\n")
-    k=1
-    for D in distances:
-        for it, (c, s) in enumerate(couples):
-            print(
-                f"[{k}/{len(distances)*len(couples)}] - ({it+1}/{len(couples)}) : Distance={D} ; central={c},"
-                f" secondary={s}", end="\n"
-            )
+    try:
+        print(f"Starting bulk simulation: {len(distances)*len(couples)} simulations to run.\n")
+        k=1
+        for D in distances:
+            for it, (c, s) in enumerate(couples):
+                print(
+                    f"[{k}/{len(distances)*len(couples)}] - ({it+1}/{len(couples)}) : Distance={D} ; central={c},"
+                    f" secondary={s}", end="\n"
+                )
+                
+                C = bs.Star(
+                    magnitude=c,
+                    type_or_temp=config.get(
+                        'central_star_temperature',
+                        config.get('central_spectral_type')
+                    ),
+                    band_dict=band_dict
+                )
+                S = bs.Star(
+                    magnitude=s,
+                    type_or_temp=config.get(
+                        'companion_star_temperature',
+                        config.get('companion_spectral_type')
+                    ),
+                    band_dict=band_dict
+                )
 
-            sim = bs.GaiaSimulator(
-                ccd=ccd,
-                M1=c,
-                M2=s,
-                distance=D,
-                angle=angle
-            )
+                sim = bs.GaiaSimulator(
+                    ccd=ccd,
+                    central_star=C,
+                    companion_star=S,
+                    distance=D,
+                    angle=angle,
+                )
 
-            tn = sim.observe()
-            resdict = analyze_simulation(tn)
-            resdict['delta_m'] = s - c
-            sim.update_record_file(tn, other_params=resdict)
+                tn = sim.observe(
+                    shot_noise=shot_noise,
+                    ron=ron
+                )
 
-            del sim
-            gc.collect()
-            k += 1
+                resdict = analyze_simulation(tn)
+                resdict['delta_m'] = s - c
+                sim.update_record_file(tn, other_params=resdict)
+
+                del sim
+                gc.collect()
+                k += 1
+                
+    except KeyboardInterrupt as e:
+        from ..bincatsim.core.root import OBS_DATA_PATH
+        import os
+        
+        fold_to_delete = os.path.join(OBS_DATA_PATH, tn)
+        if os.path.exists(fold_to_delete):
+            import shutil
+            shutil.rmtree(fold_to_delete)
+            print(f"Deleted incomplete simulation folder: {fold_to_delete}")
+        print("Simulation interrupted.")

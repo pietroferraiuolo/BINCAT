@@ -1,4 +1,4 @@
-from .simulator import GaiaSimulator
+from .simulator import GaiaSimulator, Star
 from .instruments import CCD
 
 from .utils import *

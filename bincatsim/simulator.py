@@ -5,13 +5,23 @@ import numpy as _np
 from .utils import *
 import astropy.units as _u
 from astropy.io import fits
-from .instruments import CCD
+from .instruments import CCD, Band
 import matplotlib.pyplot as _plt
 from xupy import typings as _xt
 from .utils.logging import SystemLogger as _SL
 from .core.root import OBS_DATA_PATH, SIMPATH
 from opticalib.ground.osutils import _header_from_dict as hfd
+import synphot as _sp
 
+_SPECTRAL_TYPE_MAPPING = {
+    "O": 30000 * _u.K,
+    "B": 10000 * _u.K,
+    "A": 7500 * _u.K,
+    "F": 6000 * _u.K,
+    "G": 5200 * _u.K,
+    "K": 3700 * _u.K,
+    "M": 2400 * _u.K
+}
 
 class GaiaSimulator:
     """
@@ -21,14 +31,14 @@ class GaiaSimulator:
     ----------
     ccd : CCD
         The CCD to use for the observation.
-    M1 : float
-        Magnitude of the primary star.
-    M2 : float
-        Magnitude of the secondary star.
+    central_star : Star
+        The primary star of the binary system.
+    companion_star : Star
+        The secondary star of the binary system.
     distance : float or astropy.units.Quantity
         Angular separation between the two stars in milliarcseconds (mas).
     angle : float or astropy.units.Quantity, optional
-        Total angle to cover in the simulation in degrees. Default is 360 degrees.
+        Total angle to cover in the simulation in degrees. Default is 90 degrees.
 
     Attributes
     ----------
@@ -54,10 +64,10 @@ class GaiaSimulator:
         self,
         *,
         ccd: CCD,
-        M1: float,
-        M2: float,
+        central_star: "Star",
+        companion_star: "Star",
         distance: float | _u.Quantity,
-        angle: float | _u.Quantity = 360.0,
+        angle: float | _u.Quantity = 90.0,
     ):
         """The constructor"""
         self._logger = _SL(__class__)
@@ -84,12 +94,14 @@ class GaiaSimulator:
                 f"Map shape must be larger than twice the distance of the binary system: {self.map_shape} < {2*self.distance*2}"
             )
 
-        self.M2 = M2
-        self.M1 = M1
-        self._logger.info(f"Central star magnitude: {self.M1} mag.")
-        self._logger.info(f"Companion star magnitude: {self.M2} mag.")
+        self.central_star = central_star
+        self.companion_star = companion_star
+        self.M1 = self.central_star.magnitude
+        self.M2 = self.companion_star.magnitude
+        self._logger.info(f"Central star magnitude: {self.central_star.magnitude} mag.")
+        self._logger.info(f"Companion star magnitude: {self.companion_star.magnitude} mag.")
 
-        self._Mtot = -2.5 * _np.log10(10 ** (-0.4 * M1) + 10 ** (-0.4 * M2))
+        self._Mtot = -2.5 * _np.log10(10 ** (-0.4 * self.M1) + 10 ** (-0.4 * self.M2))
         self._logger.info(
             f"Calibration G-Magnitude of the single source: {self._Mtot} mag."
         )
@@ -115,12 +127,12 @@ class GaiaSimulator:
         self.t_int = 4 * _u.s  # Default integration time for Gaia CCDs
 
         self.central_star_flux = self._compute_star_flux(
-            self.M1, collecting_area=self.collecting_area, integration_time=self.t_int
+            self.central_star, collecting_area=self.collecting_area, integration_time=self.t_int
         )
         self._logger.info(f"Central star flux: {self.central_star_flux} photons/s/cm².")
 
         self.comp_star_flux = self._compute_star_flux(
-            self.M2, collecting_area=self.collecting_area, integration_time=self.t_int
+            self.companion_star, collecting_area=self.collecting_area, integration_time=self.t_int
         )
         self._logger.info(f"Companion star flux: {self.comp_star_flux} photons/s/cm².")
 
@@ -450,7 +462,7 @@ class GaiaSimulator:
 
     def _compute_star_flux(
         self,
-        M: float | _u.Quantity,
+        star: "Star",
         collecting_area: float | _u.Quantity,
         integration_time: float | _u.Quantity = 1 * _u.s,
     ) -> _u.Quantity:
@@ -459,8 +471,8 @@ class GaiaSimulator:
 
         Parameters
         ----------
-        M : u.Quantity or float
-            Magnitude of the star.
+        star : Star
+            The star object containing magnitude and other properties.
         collecting_area : u.Quantity or float
             Collecting area of the telescope in cm².
         integration_time : u.Quantity or float, optional
@@ -471,50 +483,12 @@ class GaiaSimulator:
         u.Quantity
             Photon flux in photons per second per cm².
         """
-        if not isinstance(M, _u.Quantity):
-            M = M * _u.mag
-        if not isinstance(collecting_area, _u.Quantity):
-            collecting_area = collecting_area * _u.m**2  # Assuming input is in m²
-        collecting_area = collecting_area.to(_u.cm**2)
-        base_flux = self._band_flux()
-        mag_values = M.value
-        magnitude_factor = 10 ** (-0.4 * mag_values)
-        photon_flux = base_flux * magnitude_factor
-        tot_photons = (
-            photon_flux * collecting_area * integration_time
-        )  # n_photons collected
-        if tot_photons.value < 1:
-            import warnings
+        return (star.flux * collecting_area.to(_u.cm**2) * integration_time.to(_u.s)).to_value()
 
-            warnings.warn(
-                message="The number of photons collected is less than 1. This may lead to inaccurate results.",
-                category=RuntimeWarning,
-            )
-        return _np.maximum(1, tot_photons.value)
-
-    def _band_flux(self) -> _u.Quantity:
-        """
-        Calculate photon flux for magnitude 0 star in V-band.
-
-        Returns
-        -------
-        u.Quantity
-            Photon flux in photons per second per cm².
-        """
-        from astropy.constants import h, c
-
-        f_nu_0 = self._bands["zero_point"]  # Standard zero-point in Janskys
-        lambda_eff = self._bands["wavelength"].to(_u.nm)
-        delta_lambda = self._bands["bandwidth"].to(_u.nm)
-        f_lambda = f_nu_0 * c / lambda_eff**2
-        energy_flux = f_lambda * delta_lambda
-        photon_energy = h * c / lambda_eff
-        photon_flux = (energy_flux / photon_energy).to(1 / (_u.s * _u.cm**2))
-        return photon_flux
 
     def _create_ring(
         self, radius: int, show: bool = False
-    ) -> _np.ndarray:
+    ):
         """
         Create a ring mask for the sky map.
 
@@ -602,3 +576,158 @@ class GaiaSimulator:
        Cube shape: {self._cube.shape if hasattr(self, '_cube') else 'Not created yet'}
        Observed: {'Yes' if self.is_observed else 'No'}
     """
+
+class Star:
+    
+    def __init__(
+        self,
+        *,
+        magnitude: float|_u.Quantity,
+        type_or_temp: str|int = 5800 * _u.K,
+        band: str = 'gaia_g'
+    ):
+        """Initialize a Star object with its magnitude and band information.
+        
+        Parameters
+        ----------
+        magnitude : float or astropy.units.Quantity
+            The magnitude of the star. If a float is provided, it is assumed to 
+            be in magnitudes and will be converted to an astropy Quantity with 
+            units of magnitude.
+        type_or_temp : str or int, optional
+            The spectral type or effective temperature of the star. This can be
+            used to select a template spectrum for the star. Default is 5800 K,
+            which corresponds to a G-type star like the Sun.
+        band_dict : dict
+            A dictionary containing the band information, including 'name', 
+            'wavelength', 'throughput', and 'zero_point'. The values in the 
+            dictionary should be astropy Quantities with appropriate units.
+        """
+        
+        self.magnitude = magnitude
+        self.band = band
+
+        self._build_passband()
+        self._resolve_spectral_type(type_or_temp)
+        self._build_spectrum()
+    
+    def __repr__(self):
+        """String representation of the Star."""
+        return f"""Star(G={self.magnitude} mag, T={self.temperature:.0f} K)"""
+    
+    @property
+    def flux(self):
+        """Return the integrated flux of the star over the bandpass."""
+        return self.spectrum.integrate(self.wavelength)
+    
+    def show_spectrum(self, **kwargs: dict[str, _xt.Any]) -> None: # type: ignore
+        """
+        Plot the spectrum of the star.
+        
+        Parameters
+        ----------
+        **kwargs : dict, optional
+            Additional keyword arguments to pass to the plot function. 
+            This include 
+            - 'xlim' and 'ylim' to set the limits of the axes.
+        """
+        w, y = self.spectrum._get_arrays(self.wavelength)
+        
+        xlim = kwargs.pop("xlim", None)
+        ylim = kwargs.pop("ylim", None)
+        _plt.figure()
+        _plt.plot(w.to_value(self.wavelength.unit), y, **kwargs)
+        _plt.xlabel(f"Wavelength [{self.wavelength.unit.to_string()}]")
+        _plt.ylabel(f"Flux Density [{y.unit.to_string()}]")
+        _plt.title(f"Star Spectrum: {self.magnitude} mag, {self.temperature:.0f} K")
+        if xlim is not None:
+            _plt.xlim(xlim)
+        if ylim is not None:
+            _plt.ylim(ylim)
+        _plt.show()
+        
+    def _build_passband(self):
+        """Extract band information from the provided dictionary."""
+        band = Band(self.band)
+        
+        for attr in ["name", "wavelength", "zero_point", "transmission"]:
+            if not hasattr(band, attr):
+                raise ValueError(f"Band information is missing the '{attr}' attribute.")
+            else:
+                setattr(self, attr, getattr(band, attr))
+        
+        if all([self.transmission is None, self.wavelength is not None]):
+            raise RuntimeError(
+                "Transmission information is missing. Cannot build the bandpass without it."
+            )
+        
+        self.bandpass = _sp.SpectralElement(
+            _sp.models.Empirical1D,
+            points = self.wavelength,
+            lookup_table = _np.asarray(self.transmission, dtype=_np.float64)
+        )
+        
+    
+    def _build_spectrum(self):
+        """Build the spectrum of the star based on its magnitude."""
+        base_spectra = _sp.SourceSpectrum(
+            _sp.BlackBodyNorm1D,
+            temperature=self.temperature,
+        )
+
+        ## Get the band-averaged Flux density
+        flux_density = _sp.Observation(
+            base_spectra,
+            self.bandpass,
+            binset=self.wavelength,
+            force='taper'
+        ).effstim(_u.Jy)
+
+        ## Flux Density Scale factor from to Gmag
+        sf = (self.zero_point / flux_density).decompose().value
+
+        ## Now scale the base_spectra to the 0 G magnitude flux density in the G
+        ## band observe it, and then scale it to the actual magnitude of the star
+        final_spectra = _sp.Observation(
+            base_spectra * sf,
+            self.bandpass,
+            binset=self.wavelength,
+            force='taper',
+        )
+        
+        self.spectrum = final_spectra * 10 ** (-0.4 * self.magnitude)
+    
+    def _resolve_spectral_type(self, type_or_temp: str|int):
+        """Resolve the spectral type or effective temperature of the star."""
+        if isinstance(type_or_temp, str):
+            type_or_temp = type_or_temp.upper()
+            if type_or_temp in _SPECTRAL_TYPE_MAPPING:
+                self.temperature = _SPECTRAL_TYPE_MAPPING[type_or_temp]
+            else:
+                raise ValueError(f"Unknown spectral type: {type_or_temp}. Valid types are: {list(_SPECTRAL_TYPE_MAPPING.keys())}")
+        else:
+            self.temperature = self._resolve_unit(type_or_temp, "K")
+    
+    @staticmethod
+    def _resolve_unit(q: float|_u.Quantity, unit: str):
+        """
+        Resolve the unit of a given value based on the specified unit string.
+        
+        Parameters
+        ----------
+        q : float or astropy.units.Quantity
+            The value to be converted or assigned a unit.
+        unit : str
+            The unit to convert to or assign if the value is a float.
+        
+        Returns
+        -------
+        astropy.units.Quantity
+            The value with the specified unit.
+        """
+        if hasattr(q, 'unit'):
+            return q.to(unit)
+        else:
+            return q * _u.Unit(unit)
+            
+    

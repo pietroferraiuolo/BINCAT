@@ -1,0 +1,34 @@
+## SIMULATION PARAMETERS
+
+BULK.SIMULATION:
+
+  band: 'gaia_g' # photometric band to use for the simulation
+  max_delta_mag: 3 # max delta mag to simulate
+  starting_magnitude: 8 # G mag
+  central_star_temperature: 5800 # K
+  companion_star_temperature: 5340 # K
+  distance: np.arange(20,220, 10) # mas
+  angle: 90 # degrees
+  shot_noise: false
+  ron: false
+
+
+SINGLE.SIMULATION:
+
+  band: 'gaia_g' # photometric band to use for the simulation
+  distance: 150
+  angle: 90
+  shot_noise: false
+  ron: false
+
+  CENTRAL.STAR:
+    temperature: 5800
+    spectral_type: null
+    magnitude: 8
+
+  COMPANION.STAR:
+    temperature: 5340
+    spectral_type: null
+    magnitude: 9
+
+

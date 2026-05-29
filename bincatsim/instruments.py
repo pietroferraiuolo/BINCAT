@@ -469,12 +469,6 @@ Integration time: {self.integration_time[0]:.2f}
         _plt.grid(linestyle="--", alpha=0.85)
         _plt.plot(
             self._passbands["lambda"] / 1000,
-            self._passbands["G"],
-            c="green",
-            label="G",
-        )
-        _plt.plot(
-            self._passbands["lambda"] / 1000,
             self._passbands["RP"],
             c="red",
             label="RP",
@@ -487,6 +481,13 @@ Integration time: {self.integration_time[0]:.2f}
             label="BP",
             linestyle="--",
         )
+        _plt.plot(
+            self._passbands["lambda"] / 1000,
+            self._passbands["G"],
+            c="green",
+            label="G",
+            linewidth=2,
+        )
         _plt.xlabel("Wavelength [μm]")
         _plt.ylabel("Throughput")
         _plt.title("Gaia DR3 Passbands")
@@ -494,58 +495,56 @@ Integration time: {self.integration_time[0]:.2f}
         _plt.legend()
         _plt.show()
 
+class Band:
+    
+    def __init__(
+        self, 
+        name: str,
+        wavelength: _u.Quantity|None = None,
+        transmission: _xt.Array|None = None,
+        zero_point: float|None = None
+    ):
+        self.name = name
 
-class GaiaTelescope:
-    """
-    Class to simulate the Gaia telescope PSF.
-    This class creates an optical system with the parameters of the Gaia
-    telescope and computes the PSF for a given wavelength.
+        if not self._resolved_band():
+            self._wavelength = wavelength
+            self._transmission = transmission
+            self._zero_point = zero_point
+        
+        if all(
+            [
+                x is None 
+                for x in [self._wavelength, self._transmission, self._zero_point]
+            ]
+        ):
+            raise ValueError(
+                f"Could not resolve band '{name}' from database, and no parameters provided."
+            )
 
-    Telescope Parameters
-    --------------------
-    aperture_width : float, optional
-        The width of the aperture in meters. Default is 1.5 m.
-    aperture_height : float, optional
-        The height of the aperture in meters. Default is 0.5 m.
-    pixel_scale_x : float, optional
-        The pixel scale in the x direction in arcseconds per pixel. Default is 0.05 arcsec/pixel.
-    pixel_scale_factor : int, optional
-        The factor to scale the pixel size in the y direction. Default is 2.
-    field_of_view : float, optional
-        The field of view in arcseconds. Default is 5 arcsec. A non square field of view
-        can be used.
-    wavelength_pfs : float, optional
-        The wavelength for the PSF calculation in meters. Default is 550 nm.
+    def _resolved_band(self) -> bool:
+        if self.name is None:
+            return False
+        bands = _qt.read(BANDS_FILE)
+        band_info = bands[[x == self.name.lower() for x in map(str.lower, bands['band'])]]
+        if len(band_info) == 0:
+            return False
+        self._zero_point = band_info["zero_point"][0]
+        self._wleff = band_info["wavelength"][0].to(_u.nm)
+        
+        passband = _qt.read(PASSBAND_FILE)
+        self._wavelength = passband["lambda"].to(_u.nm)
+        self._transmission = passband['G'].filled(0)
 
-    CCD Parameters
-    --------------
-    band : str, optional
-        The band for which the CCD is initialized. Options are:
-        - Gaia_G
-        - Gaia_BP
-        - Gaia_RP
-    ccd_pixels : list, optional
-        The number of pixels in the CCD. Default is [4500, 1966] for Gaia.
-    pixel_area : float, optional
-        The area of a single pixel in square microns. Default is 10x30 microns.
-    ccd_int_time : float, optional
-        The integration time per CCD in seconds. Default is 4.42 seconds.
-    """
-
-    def __init__(self, **kwargs: dict[str, _xt.Any]):
-        """The constructor"""
-        self.speed = 59.9641857803 * _u.arcsec / _u.s
-        self.period = (6 * _u.hour).to(_u.s)
-        self.precession_period = (63 * _u.day).to(_u.s)
-        self.__create_optical_system(**kwargs)
-
-    def __repr__(self):
-        """String representation of the Gaia Telescope."""
-        return f"""           Gaia Telescope V0
-           -----------------
-          Aperture: {self.apert_w} x {self.apert_h}
-    Scansion speed: {self.speed:.2f}
-    Orbital Period: {self.period.to(_u.hour)}
- Precession period: {self.precession_period.to(_u.day)}
-Wavelength for PSF: {self.wavel_pfs}
-"""
+        return True
+    
+    @property
+    def wavelength(self) -> _u.Quantity:
+        return self._wavelength
+    
+    @property
+    def transmission(self) -> _xt.Array:
+        return self._transmission
+    
+    @property
+    def zero_point(self) -> float:
+        return self._zero_point
