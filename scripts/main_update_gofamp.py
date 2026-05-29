@@ -16,7 +16,7 @@ if __name__ == "__main__":
     parser.add_argument('-w', '--wait-time', type=int, default=0, help='Wait time in seconds before starting')
     args = parser.parse_args()
     
-    record_file = "/home/pietrof/NAS/BINCAT/data/simulations/simulations_record.csv"
+    record_file = "/home/pietrof/NAS/BINCAT/data/simulations/simulations_record_v1.csv"
     df = pd.read_csv(record_file)
     sim_dataset = pd.read_csv(record_file)
 

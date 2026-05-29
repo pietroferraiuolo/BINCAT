@@ -289,6 +289,11 @@ class IPD():
         return ipd_frac_multipeak, ipd_frac_badfit
 
     def show_harmonic_fit(self):
+        """
+        Plots the harmonic fit to the logarithm of the GoF reduced χ^2 values as 
+        a function of phi.
+        """
+        
         from grasp import plots
         
         if len(self._fit.coeffs) > 5:
@@ -304,7 +309,8 @@ class IPD():
             + r"$\varphi_{ipd}$"
             + f"={self.gof_phase:.1f} deg",
             xlabel=r"Scan Angle $\varphi$ [deg]",
-            legend=legenon
+            legend=legenon,
+            dont_show=not legenon,
         )
 
         if legenon:
@@ -346,7 +352,7 @@ class IPD():
         fax.legend([fax.lines[0]], [label], loc="best", fontsize="medium")
         fig.show()
         
-    def _find_chi_threshold(self, epsilon: float = 1e-6, verbose: bool = False):
+    def _find_chi_threshold(self, epsilon: float = 1e-4, verbose: bool = False):
         """
         Find the threshold in chi-squared values that separates good fits from bad fits.
         
@@ -356,7 +362,7 @@ class IPD():
         Parameters
         ----------
         epsilon : float, optional
-            tolerance value for the chi-squared threshold. Defaults to 1e-6.
+            tolerance value for the chi-squared threshold. Defaults to 1e-4.
         verbose : bool, optional
             If True, print the phi value at the chi-squared threshold. Defaults 
             to False.
@@ -371,16 +377,17 @@ class IPD():
         hp = h['counts']
         hp_x = h['bins']
         polyfit = fit_data_points(hp, x_data=hp_x, method='poly2', plot=False)
-        min = argrelextrema(polyfit.y, _np.less)
-        ythresh = polyfit.x[min]
+        
+        # analytical minimum of the fitted parabola: x = -b/(2a)
+        a, b, _ = polyfit.coeffs
+        ythresh = -b / (2 * a)
 
-        for k, chival in enumerate(self.chi2_al):
-            if abs(chival - ythresh) < epsilon:
-                if verbose:
-                    print(f"Phi at chi2 threshold: {self.phi[k]:.2f} degrees ({k})")
-                break
-
+        # Find the index of the chi2_al value closest to the threshold
+        k = int(_np.argmin(_np.abs(self.chi2_al - ythresh)))
         phithresh = self.phi[k]
+        
+        if verbose:
+            print(f"Chi-squared threshold: {ythresh:.2e} at phi={phithresh:.1f} deg")
         
         self._chi2_threshold = ythresh
         self._phi_threshold = phithresh
@@ -412,7 +419,7 @@ class IPD():
         phi  = []
         for obs in self.cube:
             psf = getattr(obs, attr)
-            chi2.append(_np.sum(((psf - expected)/errors)**2) / self.dof)
+            chi2.append(_np.sum(((psf - expected)**2/errors)) / self.dof)
             phi.append(obs.phi)
 
         chiphi = _np.array(list(zip(chi2, phi)))
@@ -437,8 +444,8 @@ class IPD():
         dt['fit'] = self._fit
         dt['gof_amplitude'] = self.gof_amp
         dt['gof_phase'] = self.gof_phase
-        dt['ipd_frac_multipeak'] = self.ipd_frac_multipeak
-        dt['ipd_frac_badfit'] = self.ipd_frac_badfit
+        dt['ipd_frac_multipeak'] = self.frac_multipeak
+        dt['ipd_frac_badfit'] = self.frac_badfit
         dt['distance_mas'] = self.cube[0].primary_meta['DISTMAS']
         dt['central_mag'] = self.cube[0].primary_meta['M1']
         dt['secondary_mag'] = self.cube[0].primary_meta['M2']
@@ -461,7 +468,7 @@ class IPD():
         order: int = 1,
         which: str = '2d',
         threshold: float = 0.1,
-        epsilon: float = 1e-6,
+        epsilon: float = 1e-4,
         verbose: bool = False
     ) -> "IPD":
         """
@@ -478,12 +485,12 @@ class IPD():
             txt += f" gof_amp={self.gof_amp:.2e},"
         if self.gof_phase is not None:
             txt += f" gof_phase={self.gof_phase:.1f} deg"
-        if self.ipd_frac_multipeak is not None:
-            txt += f" ipd_frac_multipeak={self.ipd_frac_multipeak:.2%},"
-        if self.ipd_frac_badfit is not None:
-            txt += f" ipd_frac_badfit={self.ipd_frac_badfit:.2%}"
+        if self.frac_multipeak is not None:
+            txt += f" ipd_frac_multipeak={self.frac_multipeak:.2%},"
+        if self.frac_badfit is not None:
+            txt += f" ipd_frac_badfit={self.frac_badfit:.2%}"
         txt += ")"
         return txt
-    
+
     def __str__(self):        
         return _pformat(self.ipd, sort_dicts=False, indent=2)

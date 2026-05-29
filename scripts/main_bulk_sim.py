@@ -14,13 +14,15 @@ except Exception as e:
 parfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parameters.yaml")
 config = resolve_bulk_simulation_config(parfile)
 
-sm = config['starting_magnitude']
-dm = config['delta_mag']
+sm = int(config['starting_magnitude'])
+dm = int(config['delta_mag'])
+
+max = sm + dm
 
 central = []
 secondary = []
-for c in range(sm):
-    for s in range(c, min(sm + dm, c + dm + 1)):
+for c in range(sm, max + 1):
+    for s in range(c, min(max, c + (dm + 1))):
         central.append(c)
         secondary.append(s)
 
@@ -47,7 +49,7 @@ band_dict = {
 
 def analyze_simulation(tn: str):
     ipd = bs.IPD(tn)
-    ipd()
+    ipd(epsilon=1e-3)
     return {
         'gof_amp': ipd.gof_amp,
         'gof_phase': ipd.gof_phase,
@@ -77,7 +79,7 @@ if __name__=='__main__':
                         'central_star_temperature',
                         config.get('central_spectral_type')
                     ),
-                    band_dict=band_dict
+                    band=config.get('band', 'gaia_g')
                 )
                 S = bs.Star(
                     magnitude=s,
@@ -85,7 +87,7 @@ if __name__=='__main__':
                         'companion_star_temperature',
                         config.get('companion_spectral_type')
                     ),
-                    band_dict=band_dict
+                    band=config.get('band', 'gaia_g')
                 )
 
                 sim = bs.GaiaSimulator(
@@ -98,7 +100,7 @@ if __name__=='__main__':
 
                 tn = sim.observe(
                     shot_noise=shot_noise,
-                    ron=ron
+                    read_out_noise=ron
                 )
 
                 resdict = analyze_simulation(tn)
@@ -110,7 +112,7 @@ if __name__=='__main__':
                 k += 1
                 
     except KeyboardInterrupt as e:
-        from ..bincatsim.core.root import OBS_DATA_PATH
+        from bincatsim.core.root import OBS_DATA_PATH
         import os
         
         fold_to_delete = os.path.join(OBS_DATA_PATH, tn)
