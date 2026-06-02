@@ -12,9 +12,13 @@ def run_ipd(tn: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--row", type=int, default=0, help="Row index to start from")
-    args = parser.parse_args()
+    parser.add_argument("-v", "--version", type=str, default='', help="Version of the record file to use (e.g., v1, v2)")
     
-    record_file = "/home/pietrof/NAS/BINCAT/data/simulations/simulations_record_v1.csv"
+    args = parser.parse_args()
+
+    version = '' if args.version == '' else '_v'+args.version
+    
+    record_file = f"/home/pietrof/NAS/BINCAT/data/simulations/simulations_record{version}.csv"
     df = pd.read_csv(record_file)
     sim_dataset = pd.read_csv(record_file)
 

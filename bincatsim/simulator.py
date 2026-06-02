@@ -137,7 +137,6 @@ class GaiaSimulator:
         self._logger.info(f"Companion star flux: {self.comp_star_flux} photons/s/cm².")
 
         self._base_map = self._create_base_map()
-        
         self._noisegen = _np.random.Generator(_np.random.PCG64())
 
     def observe(
@@ -431,8 +430,8 @@ class GaiaSimulator:
 
     def _create_base_map(self):
         """
-        Create the base map with the primary star at the center and the secondary star
-        at a distance of `self.distance` in a random direction.
+        Create the base map with the primary star at the center and the secondary
+        star at a distance of `self.distance` in a random direction.
         """
         center = (self.map_shape[0] // 2, self.map_shape[1] // 2)
         _map = _np.zeros(self.map_shape, dtype=_np.float64)
@@ -463,8 +462,6 @@ class GaiaSimulator:
     def _compute_star_flux(
         self,
         star: "Star",
-        collecting_area: float | _u.Quantity,
-        integration_time: float | _u.Quantity = 1 * _u.s,
     ) -> _u.Quantity:
         """
         Calculate photon flux for magnitude M star in V-band.
@@ -473,17 +470,17 @@ class GaiaSimulator:
         ----------
         star : Star
             The star object containing magnitude and other properties.
-        collecting_area : u.Quantity or float
-            Collecting area of the telescope in cm².
-        integration_time : u.Quantity or float, optional
-            Integration time in seconds. Default is 1 second.
 
         Returns
         -------
-        u.Quantity
+        Quantity
             Photon flux in photons per second per cm².
         """
-        return (star.flux * collecting_area.to(_u.cm**2) * integration_time.to(_u.s)).to_value()
+        return (
+            star.flux * \
+                self.collecting_area.to(_u.cm**2) * \
+                    self.integration_time.to(_u.s)
+        ).to_value()
 
 
     def _create_ring(

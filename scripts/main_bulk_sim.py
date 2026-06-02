@@ -17,12 +17,12 @@ config = resolve_bulk_simulation_config(parfile)
 sm = int(config['starting_magnitude'])
 dm = int(config['delta_mag'])
 
-max = sm + dm
+maxim = sm + dm + 1
 
 central = []
 secondary = []
-for c in range(sm, max + 1):
-    for s in range(c, min(max, c + (dm + 1))):
+for c in range(sm, maxim + 1):
+    for s in range(c, min(maxim, c + (dm + 1))):
         central.append(c)
         secondary.append(s)
 

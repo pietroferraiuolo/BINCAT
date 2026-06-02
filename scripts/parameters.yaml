@@ -7,7 +7,7 @@ BULK.SIMULATION:
   starting_magnitude: 8 # G mag
   central_star_temperature: 5800 # K
   companion_star_temperature: 5340 # K
-  distance: np.arange(20,220, 5) # mas
+  distance: np.arange(20,221, 5) # mas
   angle: 90 # degrees
   shot_noise: false
   ron: false

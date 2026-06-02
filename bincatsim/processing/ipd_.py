@@ -280,8 +280,8 @@ class IPD():
             if verbose:
                 print(f"Phi: {psfd.phi:.1f} deg - Peaks AL: {len(peaks_al)}")
 
-        ipd_frac_multipeak = mcounter / self.N
-        ipd_frac_badfit   = bfcounter / self.N
+        ipd_frac_multipeak = mcounter / len(self.cube)
+        ipd_frac_badfit   = bfcounter / len(self.cube)
 
         self.frac_multipeak = ipd_frac_multipeak
         self.frac_badfit = ipd_frac_badfit
