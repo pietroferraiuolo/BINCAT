@@ -108,6 +108,7 @@ class GaiaSimulator:
 
         self.is_observed = False
         self._bands = self.ccd._bands
+        self.ccd.set_exposure_time(self._Mtot)
 
         G = self._Mtot
 
@@ -138,6 +139,7 @@ class GaiaSimulator:
 
         self._base_map = self._create_base_map()
         self._noisegen = _np.random.Generator(_np.random.PCG64())
+
 
     def observe(
         self,
@@ -573,6 +575,7 @@ class GaiaSimulator:
        Cube shape: {self._cube.shape if hasattr(self, '_cube') else 'Not created yet'}
        Observed: {'Yes' if self.is_observed else 'No'}
     """
+
 
 class Star:
     

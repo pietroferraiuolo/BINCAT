@@ -87,10 +87,26 @@ class CCD:
 
         ### Primary mirror's Area
         self.integration_area = 1.45*0.5 * _u.m**2
+
         ### TDI gates on CCD, based on source Magnitude
-        self._TDI_clock_rate = 0.9828e-3 * _u.s
-        self.TDIGates = _np.array([4494, 2906, 2057, 1030, 512, 256, 128, 64, 32, 16, 8, 4, 2])
-        self.integration_time = self.TDIGates * self._TDI_clock_rate
+        self.integration_time = None
+        self._clock_rate = 0.9828e-3 * _u.s
+        self._tdi_conditions = ["{G}>13", "13<={G}<11.5", "{G}<=11.5"]
+        self._tdi_gates = {
+            #  thr Mag   : TDI Lines used
+                16.5     :     4494,
+                15.75    :     2057,
+                15       :     1030,
+                14.25    :     512,
+                13.5     :     256,
+                12.75    :     128,
+                10.5     :     16,
+                8.25     :     2
+        } # Derived empirically by computing total flux for a given magnitude at
+            # each TDI gate and comparing to the full well capacity of the CCD.
+            # which is in electrons, and i'm doing it in photons... But not really
+            # since in the passband is included the CCD QE, so it's more like 
+            # electrons. It should be fine.
 
         ## PSF Specifications
         self.psf_pxscale_x = kwargs.get(
@@ -116,6 +132,21 @@ class CCD:
             },
         }
         self._wc_conditions = ["{G}<13", "13<={G}<16", "16<={G}"]
+
+    def set_exposure_time(self, G: float|_u.Quantity) -> None:
+        """
+        Set the integration time based on the G-band magnitude of the source.
+
+        Parameters
+        ----------
+        G : float or astropy.units.Quantity
+            The G-band magnitude of the source, used to determine the appropriate
+            integration time based on TDI gates.
+        """
+        for M, L in self._tdi_gates.items():
+            if eval(f"{G} >= {M}"):
+                self.integration_time = L * self._clock_rate
+                break
 
     @property
     def header(self) -> _fits.Header | None:
@@ -212,20 +243,6 @@ class CCD:
         """
         _ut.display_psf(self.psf, self.psf_x, self.psf_y, mode=mode, **kwargs)
 
-
-    def __repr__(self):
-        """String representation of the CCD."""
-        return f"""          e2v™ CCD91-72
-          -------------
-            Band: {self._bands['band'][0]}
-      Pixel area: {self.pixel_area}
-     Pixel Scale: {self.ccd_pxscale_x.to_value(_u.mas/_u.pix):.1f} x {self.ccd_pxscale_y.to_value(_u.mas/_u.pix):.1f} {_u.mas/_u.pix}
-        CCD fov : {self.ccd_pixels[0].value:.0f} x {self.ccd_pixels[1].value:.0f}  {self.ccd_pixels[0].unit}
-               -> {self.fov[0].to_value(_u.arcmin):.2f} x {self.fov[1].to_value(_u.arcmin):.2f} {_u.arcmin}
-Integration time: {self.integration_time[0]:.2f}
-       PSF shape: {list(self.psf.shape) if self.psf is not None else 'Not computed yet'} {"Rebinned" if self.rebinned else ""}
-    """
-
     def display_passbands(self) -> None:
         """
         Display the passbands of the CCD.
@@ -259,6 +276,20 @@ Integration time: {self.integration_time[0]:.2f}
         _plt.yticks(_np.arange(0, 0.85, 0.1))
         _plt.legend()
         _plt.show()
+
+
+    def __repr__(self):
+        """String representation of the CCD."""
+        return f"""          e2v™ CCD91-72
+          -------------
+            Band: {self._bands['band'][0]}
+      Pixel area: {self.pixel_area}
+     Pixel Scale: {self.ccd_pxscale_x.to_value(_u.mas/_u.pix):.1f} x {self.ccd_pxscale_y.to_value(_u.mas/_u.pix):.1f} {_u.mas/_u.pix}
+        CCD fov : {self.ccd_pixels[0].value:.0f} x {self.ccd_pixels[1].value:.0f}  {self.ccd_pixels[0].unit}
+               -> {self.fov[0].to_value(_u.arcmin):.2f} x {self.fov[1].to_value(_u.arcmin):.2f} {_u.arcmin}
+Integration time: {self.integration_time[0]:.2f}
+       PSF shape: {list(self.psf.shape) if self.psf is not None else 'Not computed yet'} {"Rebinned" if self.rebinned else ""}
+    """
 
 
 
