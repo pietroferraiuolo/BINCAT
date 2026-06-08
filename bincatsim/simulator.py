@@ -82,11 +82,9 @@ class GaiaSimulator:
         )
         self._logger.info(f"Configurations spanning 0-{self.angle} degrees.")
 
-        if not isinstance(distance, _u.Quantity):
-            self.distance = distance * _u.mas  # assuming input is in mas
-        else:
-            self.distance = distance.to(_u.mas)
-        self.distance = int(self.distance.value)  # mas
+        self.distance = int(
+            (distance * _u.mas if not isinstance(distance, _u.Quantity) else distance.to(_u.mas)).value
+        )  # mas
         self._logger.info(f"Angular separation set to {self.distance} mas.")
 
         if any([s < 2 * self.distance for s in list(self.map_shape)]):
@@ -98,8 +96,6 @@ class GaiaSimulator:
         self.companion_star = companion_star
         self.M1 = self.central_star.magnitude
         self.M2 = self.companion_star.magnitude
-        self._logger.info(f"Central star magnitude: {self.central_star.magnitude} mag.")
-        self._logger.info(f"Companion star magnitude: {self.companion_star.magnitude} mag.")
 
         self._Mtot = -2.5 * _np.log10(10 ** (-0.4 * self.M1) + 10 ** (-0.4 * self.M2))
         self._logger.info(
@@ -109,31 +105,19 @@ class GaiaSimulator:
         self.is_observed = False
         self._bands = self.ccd._bands
         self.ccd.set_exposure_time(self._Mtot)
-
-        G = self._Mtot
-
-        if G < 13:
-            idx = 0
-        elif 13 <= G < 16:
-            idx = 1
-        else:
-            idx = 2
-
-        if not eval(self.ccd._wc_conditions[idx].format(G=G)):
-            raise ValueError(f"Something's wrong...")
-
-        del G
+        if self.ccd._saturated:
+            print("WARNING: Source is brighter than the saturation threshold.")
 
         self.collecting_area = self.ccd.integration_area
-        self.t_int = 4 * _u.s  # Default integration time for Gaia CCDs
+        self.integration_time = self.ccd.integration_time
 
         self.central_star_flux = self._compute_star_flux(
-            self.central_star, collecting_area=self.collecting_area, integration_time=self.t_int
+            self.central_star
         )
         self._logger.info(f"Central star flux: {self.central_star_flux} photons/s/cm².")
 
         self.comp_star_flux = self._compute_star_flux(
-            self.companion_star, collecting_area=self.collecting_area, integration_time=self.t_int
+            self.companion_star
         )
         self._logger.info(f"Companion star flux: {self.comp_star_flux} photons/s/cm².")
 
@@ -231,8 +215,10 @@ class GaiaSimulator:
                 self._logger.info(f"Image {i:05d}: photon shot noise added.")
             # ------------------- #
 
-            psf_2d, _, _ = ccd.sample_psf(psf=convolved)
+            psf_2d, _, _ = ccd.sample_psf(psf=convolved, G=self._Mtot)
             self._logger.info(f"Image {i:05d}: PSF read-out complete (binning).")
+            h1['WINDOW'] = (ccd._window, "CCD window used for the observation")
+            h2['WINDOW'] = (ccd._window, "CCD window used for the observation")
 
             self._logger.debug(
                 f"Image {i:05d}: shifting map based on sources distance."
@@ -261,7 +247,7 @@ class GaiaSimulator:
                 self._logger.info(f"Image {i:05d}: read-out noise added.")
             # ------------------------ #
 
-            psf_x, psf_y = computeXandYpsf(psf=psf_2d)
+            psf_x, psf_y = computeXandYpsf(psf=psf_2d, window=self.ccd._window)
             self._logger.info(f"Image {i:05d}: PSF X and Y computed.")
             final = (psf_2d, psf_x, psf_y)
 
@@ -284,7 +270,7 @@ class GaiaSimulator:
         convolved = convolve_fft(
             base_source, ccd.psf, dtype=mdtype, boundary="wrap", normalize_kernel=True
         )
-        final = ccd.sample_psf(psf=convolved)
+        final = ccd.sample_psf(psf=convolved, G=self._Mtot)
 
         for k in ["M1", "M2", "DISTMAS", "PHI"]:
             h1.pop(k)
@@ -307,34 +293,6 @@ class GaiaSimulator:
         self.is_observed = True
 
         return tn
-
-    def get_integration_time(self) -> _u.Quantity:
-        """
-        Sceglie il tempo di integrazione (gate TDI) per la magnitudine combinata G_tot.
-        Logica: usa il gate più lungo che non satura (G_tot >= G_thresh).
-        """
-        G_tot = self._Mtot
-        thresholds = self.ccd._compute_tdi_gate_magnitudes(
-            mag_bright=3.0, mag_faint=21.0, saturation_margin=0.85
-        )
-
-        # ordina per tempo decrescente (gates più lunghi prima)
-        sorted_gates = sorted(
-            thresholds.items(), key=lambda kv: kv[1][1], reverse=True
-        )
-
-        for n_gates, (G_thresh, t_int) in sorted_gates:
-            if G_tot >= G_thresh:
-                self._logger.info(
-                    f"TDI gate {n_gates}: G_tot={G_tot:.2f} >= G_thresh={G_thresh:.2f}; t_int={t_int:.4f}"
-                )
-                return t_int
-
-        # se troppo brillante, fallback al minimo
-        self._logger.warning(
-            f"Source very bright (G={G_tot:.2f}); using minimum TDI gate."
-        )
-        return self.ccd.integration_time[-1]  # 2 linee
 
     def show_system(self, out: bool = False, **kwargs: dict[str, _xt.Any]) -> None: # type: ignore
         """
@@ -369,8 +327,9 @@ class GaiaSimulator:
 
     def transit(self):
         """
-        Create a generator of images of a binary star system, in which each image corresponds
-        to a different angular position of one star with respect to the other.
+        Create a generator of images of a binary star system, in which each image
+        corresponds to a different angular position of one star with respect to 
+        the other.
 
         Yields
         -------
@@ -449,6 +408,7 @@ class GaiaSimulator:
         header["DISTMAS"] = (self.distance, "Angular separation in mas")
         header["M1"] = (self.M1, "Magnitude of the primary (central) star")
         header["M2"] = (self.M2, "Magnitude of the secondary (companion) star")
+        header['GMAG'] = (self._Mtot, "Calibration G-Magnitude of the expected source")
         header["BAND"] = (self._bands["band"][0], "Photometric band")
         header["WAVELEN"] = (
             self._bands["wavelength"][0].to_value(_u.nm),

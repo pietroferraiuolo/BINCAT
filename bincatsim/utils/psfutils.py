@@ -1,4 +1,5 @@
 import os as _os
+import numpy as _np
 import matplotlib.pyplot as _plt
 from astropy.visualization import (
     ImageNormalize,
@@ -610,6 +611,7 @@ def display_psf(
 
 def computeXandYpsf(
     psf: _xt.Array | None = None,
+    window: str = "wc0"
 ) -> None | tuple[_xt.Array, _xt.Array]:
     """
     Subroutine to compute the normalized psf in the X and Y axis of the
@@ -619,7 +621,12 @@ def computeXandYpsf(
     psf_x = _xp.sum(img, axis=0)
     psf_x /= _xp.sum(psf_x)  # normalize
     psf_y = _xp.sum(img, axis=1)
-    psf_y /= _xp.sum(psf_y)
+    if window != "wc0":
+        psf_y = _np.full(shape=psf_x.shape, fill_value=psf_y.max())
+        normy = 1
+    else:
+        normy = _xp.sum(psf_y)
+    psf_y /= normy
     return psf_x, psf_y
 
 

@@ -81,11 +81,31 @@ def resolve_bulk_simulation_config(config_path: str | Path = "scripts/parameters
         if k not in bulk:
             raise KeyError(f"Missing BULK.SIMULATION.{k}")
 
-    max_delta_mag = int(bulk["max_delta_mag"])
-    if max_delta_mag < 0:
+    # Parse max_delta_mag (accepts int, list, or numeric string)
+    max_delta_mag_raw = bulk["max_delta_mag"]
+    if isinstance(max_delta_mag_raw, (int, float)):
+        max_delta_mag = np.array([int(max_delta_mag_raw)], dtype=int)
+    elif isinstance(max_delta_mag_raw, (list, tuple)):
+        if not all(isinstance(v, (int, float)) for v in max_delta_mag_raw):
+            raise ValueError("max_delta_mag list must contain only numeric values.")
+        max_delta_mag = np.asarray([int(v) for v in max_delta_mag_raw], dtype=int)
+    else:
+        raise ValueError(f"Unsupported max_delta_mag type: {type(max_delta_mag_raw).__name__}")
+    
+    if np.any(max_delta_mag < 0):
         raise ValueError("BULK.SIMULATION.max_delta_mag must be >= 0")
 
-    start_mag = float(bulk["starting_magnitude"])
+    # Parse starting_magnitude (accepts float, list, or numeric string)
+    start_mag_raw = bulk["starting_magnitude"]
+    if isinstance(start_mag_raw, (int, float)):
+        start_mag = np.array([float(start_mag_raw)], dtype=float)
+    elif isinstance(start_mag_raw, (list, tuple)):
+        if not all(isinstance(v, (int, float)) for v in start_mag_raw):
+            raise ValueError("starting_magnitude list must contain only numeric values.")
+        start_mag = np.asarray(start_mag_raw, dtype=float)
+    else:
+        raise ValueError(f"Unsupported starting_magnitude type: {type(start_mag_raw).__name__}")
+
     central_temp = float(bulk["central_star_temperature"])
     companion_temp = float(bulk["companion_star_temperature"])
 

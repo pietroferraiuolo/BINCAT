@@ -11,33 +11,8 @@ try:
 except Exception as e:
     pass
 
-parfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parameters.yaml")
-config = resolve_bulk_simulation_config(parfile)
-
-sm = int(config['starting_magnitude'])
-dm = int(config['delta_mag'])
-
-maxim = sm + dm + 1
-
-central = []
-secondary = []
-for c in range(sm, maxim + 1):
-    for s in range(c, min(maxim, c + (dm + 1))):
-        central.append(c)
-        secondary.append(s)
-
-couples = list(zip(central, secondary))
-
-
-distances = config['distances']
-angle = config['angle']
-shot_noise = config['shot_noise']
-ron = config['ron']
-
 ccd = bs.CCD(
     psf=bs.paths.PSF_FILE,
-    pixel_scale_x=177*(u.mas/u.pixel),
-    pixel_scale_y=59*(u.mas/u.pixel)
 )
 
 band_dict = {
@@ -62,6 +37,36 @@ def analyze_simulation(tn: str):
     }
 
 if __name__=='__main__':
+    
+    parfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parameters.yaml")
+    config = resolve_bulk_simulation_config(parfile)
+
+    sm = config['starting_magnitude']
+    dm = config['delta_mag']
+
+    if isinstance(sm, (int,float)):
+        sm = [sm]
+    if isinstance(dm, (int,float)):
+        dm = [dm]
+    
+    if not len(sm) == len(dm):
+        raise ValueError(
+            "The number of starting magnitudes and delta magnitudes must be the same."
+        )
+
+    central = []
+    secondary = []
+    for d, start in enumerate(sm):
+        delta = int(dm[d])
+        central.extend([start]*(delta+1))
+        secondary.extend([start + i for i in range(delta + 1)])
+    
+    couples = list(zip(central, secondary))
+
+    distances = config['distances']
+    angle = config['angle']
+    shot_noise = config['shot_noise']
+    ron = config['ron']
     
     try:
         print(f"Starting bulk simulation: {len(distances)*len(couples)} simulations to run.\n")

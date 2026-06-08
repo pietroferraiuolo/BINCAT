@@ -115,6 +115,7 @@ class IPD():
         else:
             raise ValueError("Either 'tn' or 'cube' must be provided.")
         self.calibration = self.cube.calibration
+        self.window = self.cube[0].primary_meta.get('WINDOW', 'unknown')
         
         ## Parameters ##
         self.P = fitted_parameters
@@ -156,6 +157,7 @@ class IPD():
         self.gof_amp = None
         self.gof_phase = None
         self.uwe = None
+        self.window = 'unknown'
         self._compute_cube_chi2()  # re-compute chi2 values for the new cube
 
     def _compute_cube_chi2(self):
@@ -410,6 +412,9 @@ class IPD():
         np.ndarray
             An array of chi-squared values for each observation in the cube.
         """
+        if not self.window=='wc0' and which=='ac':
+            return None
+
         attr = f'psf_{which}'
         expected = getattr(self.calibration, attr)
         if errors is None:
@@ -418,7 +423,7 @@ class IPD():
         chi2 = []
         phi  = []
         for obs in self.cube:
-            psf = getattr(obs, attr)
+            psf = getattr(obs, attr)    
             chi2.append(_np.sum(((psf - expected)**2/errors)) / self.dof)
             phi.append(obs.phi)
 

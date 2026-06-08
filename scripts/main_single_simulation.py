@@ -6,9 +6,7 @@ parfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parameters.y
 config = bs.utils.read_config.resolve_single_simulation_config(parfile)
 
 ccd = bs.CCD(
-    psf=bs.paths.PSF_DATA_PATH+'/1062x2124_gpsf_T.fits',
-    pixel_scale_x=177*(u.mas/u.pixel),
-    pixel_scale_y=59*(u.mas/u.pixel)
+    psf=bs.paths.PSF_FILE,
 )
 
 def analyze_simulation(tn: str):

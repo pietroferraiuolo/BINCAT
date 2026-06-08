@@ -78,8 +78,8 @@ class CCD:
         ## CCD Specifications
         self.pixel_area = kwargs.get("pixel_area", 10 * 30 * _u.um**2)
         self.ccd_pixels = kwargs.get("ccd_pixels", [4500 * _u.pixel, 1966 * _u.pixel])
-        self.ccd_pxscale_x = kwargs.get("pixel_scale_x", 59 * _u.mas / _u.pixel)
-        self.ccd_pxscale_y = kwargs.get("pixel_scale_y", 177 * _u.mas / _u.pixel)
+        self.ccd_pxscale_y = kwargs.get("pixel_scale_y", 59 * _u.mas / _u.pixel)
+        self.ccd_pxscale_x = kwargs.get("pixel_scale_x", 177 * _u.mas / _u.pixel)
         self.ccd_pxscale_factor = (self.ccd_pxscale_y / self.ccd_pxscale_x).value
         self.full_well_capacity = 190000 * _u.electron
         self.gain = kwargs.get("gain", 2 * _u.electron / _u.adu)
@@ -91,7 +91,6 @@ class CCD:
         ### TDI gates on CCD, based on source Magnitude
         self.integration_time = None
         self._clock_rate = 0.9828e-3 * _u.s
-        self._tdi_conditions = ["{G}>13", "13<={G}<11.5", "{G}<=11.5"]
         self._tdi_gates = {
             #  thr Mag   : TDI Lines used
                 16.5     :     4494,
@@ -116,6 +115,7 @@ class CCD:
             "psf_pixel_scale_y", 1 * _u.mas / _u.pixel
         )
 
+        ## CCD Sampling Specifications
         self.rebinned = False
         self.WC = {
             0: {
@@ -132,6 +132,7 @@ class CCD:
             },
         }
         self._wc_conditions = ["{G}<13", "13<={G}<16", "16<={G}"]
+        self._window = None
 
     def set_exposure_time(self, G: float|_u.Quantity) -> None:
         """
@@ -147,6 +148,18 @@ class CCD:
             if eval(f"{G} >= {M}"):
                 self.integration_time = L * self._clock_rate
                 break
+        if self.integration_time is None:
+            self._saturated = True
+            self.integration_time = min(self._tdi_gates.values()) * self._clock_rate
+            self._logger.warning(
+                f"Source with G={G} is brighter than the saturation threshold. "
+                f"Setting integration time to maximum ({self.integration_time.to_value(_u.s):.2f} s) and flagging as saturated."
+            )
+        else:
+            self._saturated = False
+            self._logger.info(
+                f"Integration time set to {self.integration_time.to_value(_u.s):.2f} s based on G={G}."
+            )
 
     @property
     def header(self) -> _fits.Header | None:
@@ -213,6 +226,7 @@ class CCD:
         for i, condition in enumerate(self._wc_conditions):
             if eval(condition.format(G=G)):
                 wc_px = self.WC[i]["area_px"]
+                self._window = f"wc{i}"
                 break
         else:
             raise ValueError(
@@ -220,9 +234,9 @@ class CCD:
             )
         rbx = psf.shape[1] // wc_px[0]
         rby = psf.shape[0] // wc_px[1]
-        rbratio = (rby, rbx) if self.ccd_pxscale_factor > 1 else (rbx, rby)
+        rbratio = (rby, rbx) if self.ccd_pxscale_factor < 1 else (rbx, rby)
         psf_2d = _poppy.utils.rebin_array(psf, rbratio)
-        psf_x, psf_y = _ut.computeXandYpsf(psf=psf_2d)
+        psf_x, psf_y = _ut.computeXandYpsf(psf_2d, window=self._window)
         return psf_2d, psf_x, psf_y
 
     def display_psf(

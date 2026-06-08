@@ -3,10 +3,10 @@
 BULK.SIMULATION:
 
   band: 'gaia_g' # photometric band to use for the simulation
-  max_delta_mag: 4 # max delta mag to simulate
-  starting_magnitude: 8 # G mag
+  max_delta_mag: [4, 3, 3] # max delta mag to simulate
+  starting_magnitude: [9, 12.75, 16] # G mag
   central_star_temperature: 5800 # K
-  companion_star_temperature: 5340 # K
+  companion_star_temperature: 5800 # K
   distance: np.arange(20,221, 5) # mas
   angle: 90 # degrees
   shot_noise: false
@@ -16,7 +16,7 @@ BULK.SIMULATION:
 SINGLE.SIMULATION:
 
   band: 'gaia_g' # photometric band to use for the simulation
-  distance: 150
+  distance: 220
   angle: 90
   shot_noise: false
   ron: false
@@ -24,11 +24,11 @@ SINGLE.SIMULATION:
   CENTRAL.STAR:
     temperature: 5800
     spectral_type: null
-    magnitude: 8
+    magnitude: 14
 
   COMPANION.STAR:
     temperature: 5340
     spectral_type: null
-    magnitude: 9
+    magnitude: 14
 
 
