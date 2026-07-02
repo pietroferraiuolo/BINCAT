@@ -16,7 +16,7 @@ BULK.SIMULATION:
 SINGLE.SIMULATION:
 
   band: 'gaia_g' # photometric band to use for the simulation
-  distance: 220
+  distance: 500
   angle: 90
   shot_noise: false
   ron: false
@@ -24,11 +24,11 @@ SINGLE.SIMULATION:
   CENTRAL.STAR:
     temperature: 5800
     spectral_type: null
-    magnitude: 14
+    magnitude: 10
 
   COMPANION.STAR:
     temperature: 5340
     spectral_type: null
-    magnitude: 14
+    magnitude: 10
 
 

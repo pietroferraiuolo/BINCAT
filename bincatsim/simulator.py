@@ -194,7 +194,8 @@ class GaiaSimulator:
 
         i = 0
         for img in tqdm(
-            self.transit(), desc=f"[{tn}] Observing...", unit="images", total=N
+            self.transit(), desc=f"[{tn}] Observing...", unit="images", total=N,
+            ncols=90
         ):
             phi = self.compute_scan_angle(img)
             h1["PHI"] = (phi, "Position angle of companion star [deg]")

@@ -306,10 +306,10 @@ class IPD():
         fig, fax, _ = plots.regressionPlot(
             self._fit,
             f_type="datapoint",
-            title=r"$A_{ipd}$"
-            + f"={self.gof_amp:.2e}   |   "
-            + r"$\varphi_{ipd}$"
-            + f"={self.gof_phase:.1f} deg",
+            title=r"$\mathcal{A}$"
+            + f" = {self.gof_amp:.2e}   |   "
+            + r"$\vartheta$"
+            + f" = {self.gof_phase:.1f} deg",
             xlabel=r"Scan Angle $\varphi$ [deg]",
             legend=legenon,
             dont_show=not legenon,
@@ -326,6 +326,7 @@ class IPD():
             fax.legend([fax.lines[0]], [label], loc="best", fontsize="medium")
 
         fig.show()
+        return fig, fax
     
     def show_polyfit(self,):
         """
