@@ -261,34 +261,36 @@ class CCD:
         """
         Display the passbands of the CCD.
         """
-        _plt.figure(figsize=(8, 6))
-        _plt.grid(linestyle="--", alpha=0.85)
-        _plt.plot(
+        fig, ax = _plt.subplots(figsize=(8, 6))
+        ax.grid(linestyle="--", alpha=0.85)
+        ax.plot(
             self._passbands["lambda"] / 1000,
             self._passbands["RP"],
             c="red",
             label="RP",
             linestyle="--",
         )
-        _plt.plot(
+        ax.plot(
             self._passbands["lambda"] / 1000,
             self._passbands["BP"],
             c="blue",
             label="BP",
             linestyle="--",
         )
-        _plt.plot(
+        ax.plot(
             self._passbands["lambda"] / 1000,
             self._passbands["G"],
             c="green",
             label="G",
             linewidth=2,
         )
-        _plt.xlabel("Wavelength [μm]")
-        _plt.ylabel("Throughput")
-        _plt.title("Gaia DR3 Passbands")
-        _plt.yticks(_np.arange(0, 0.85, 0.1))
-        _plt.legend()
+        ax.set_xlabel("λ [μm]", fontsize=16)
+        ax.set_ylabel("Throughput", fontsize=16)
+        ax.set_title("Gaia DR3 Passbands", fontsize=20)
+        ax.set_yticks(_np.arange(0, 0.85, 0.1))
+        ax.set_yticklabels([f"{x:.1f}" for x in _np.arange(0, 0.85, 0.1)], fontsize=14)
+        ax.set_xticklabels([f"{x:.1f}" for x in ax.get_xticks()], fontsize=14)
+        ax.legend()
         _plt.show()
 
 
