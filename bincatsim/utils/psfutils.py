@@ -619,14 +619,14 @@ def computeXandYpsf(
     """
     img = psf.copy()
     psf_x = _xp.sum(img, axis=0)
-    psf_x /= _xp.sum(psf_x)  # normalize
+    psf_x = psf_x / _xp.sum(psf_x)  # normalize
     psf_y = _xp.sum(img, axis=1)
     if window != "wc0":
         psf_y = _np.full(shape=psf_x.shape, fill_value=psf_y.max())
         normy = 1
     else:
         normy = _xp.sum(psf_y)
-    psf_y /= normy
+    psf_y = psf_y / normy
     return psf_x, psf_y
 
 

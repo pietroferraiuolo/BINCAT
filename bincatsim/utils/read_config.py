@@ -168,10 +168,130 @@ def resolve_single_simulation_config(config_path: str | Path = "scripts/paramete
     }
 
 
+def _parse_closed_range(range_value: Any, field: str) -> tuple[float, float]:
+    if not isinstance(range_value, (list, tuple)) or len(range_value) != 2:
+        raise ValueError(f"{field} must be a 2-element list [min, max].")
+    if not all(isinstance(v, (int, float)) for v in range_value):
+        raise ValueError(f"{field} bounds must be numeric.")
+
+    lower = float(range_value[0])
+    upper = float(range_value[1])
+    if lower > upper:
+        raise ValueError(f"{field} lower bound must be <= upper bound.")
+    return lower, upper
+
+
+def resolve_random_simulation_config(config_path: str | Path = "scripts/parameters.yaml") -> dict[str, Any]:
+    cfg = _load_yaml(config_path)
+
+    if "RANDOM.SIMULATION" not in cfg:
+        raise KeyError("Missing RANDOM.SIMULATION section.")
+    random_cfg = cfg["RANDOM.SIMULATION"] or {}
+
+    for k in [
+        "n_iter",
+        "angle",
+        "allow_duplicate_distances",
+        "distance_range",
+        "CENTRAL.RANDOMIZE",
+        "COMPANION.RANDOMIZE",
+    ]:
+        if k not in random_cfg:
+            raise KeyError(f"Missing RANDOM.SIMULATION.{k}")
+
+    n_iter_raw = random_cfg["n_iter"]
+    if not isinstance(n_iter_raw, (int, float)):
+        raise ValueError("RANDOM.SIMULATION.n_iter must be numeric.")
+    n_iter = int(n_iter_raw)
+    if n_iter <= 0:
+        raise ValueError("RANDOM.SIMULATION.n_iter must be > 0.")
+
+    distance_min, distance_max = _parse_closed_range(
+        random_cfg["distance_range"],
+        "RANDOM.SIMULATION.distance_range",
+    )
+
+    central_cfg = random_cfg["CENTRAL.RANDOMIZE"] or {}
+    companion_cfg = random_cfg["COMPANION.RANDOMIZE"] or {}
+    for scope_name, scope in [
+        ("CENTRAL.RANDOMIZE", central_cfg),
+        ("COMPANION.RANDOMIZE", companion_cfg),
+    ]:
+        for k in ["temperature", "magnitude", "temperature_range", "magnitude_range"]:
+            if k not in scope:
+                raise KeyError(f"Missing RANDOM.SIMULATION.{scope_name}.{k}")
+
+    band = random_cfg.get("band")
+    if band is None:
+        band = (cfg.get("BULK.SIMULATION") or {}).get("band")
+    if band is None:
+        band = (cfg.get("SINGLE.SIMULATION") or {}).get("band")
+    if band is None:
+        band = "gaia_g"
+
+    return {
+        "band": band,
+        "n_iter": n_iter,
+        "angle": float(random_cfg["angle"]) * u.deg,
+        "shot_noise": _to_bool(
+            random_cfg.get("shot_noise", False),
+            "RANDOM.SIMULATION.shot_noise",
+        ),
+        "ron": _to_bool(
+            random_cfg.get("ron", False),
+            "RANDOM.SIMULATION.ron",
+        ),
+        "allow_duplicate_distances": _to_bool(
+            random_cfg["allow_duplicate_distances"],
+            "RANDOM.SIMULATION.allow_duplicate_distances",
+        ),
+        "distance_range": (distance_min, distance_max),
+        "central_randomize": {
+            "temperature": _to_bool(
+                central_cfg["temperature"],
+                "RANDOM.SIMULATION.CENTRAL.RANDOMIZE.temperature",
+            ),
+            "magnitude": _to_bool(
+                central_cfg["magnitude"],
+                "RANDOM.SIMULATION.CENTRAL.RANDOMIZE.magnitude",
+            ),
+            "temperature_range": _parse_closed_range(
+                central_cfg["temperature_range"],
+                "RANDOM.SIMULATION.CENTRAL.RANDOMIZE.temperature_range",
+            ),
+            "magnitude_range": _parse_closed_range(
+                central_cfg["magnitude_range"],
+                "RANDOM.SIMULATION.CENTRAL.RANDOMIZE.magnitude_range",
+            ),
+        },
+        "companion_randomize": {
+            "temperature": _to_bool(
+                companion_cfg["temperature"],
+                "RANDOM.SIMULATION.COMPANION.RANDOMIZE.temperature",
+            ),
+            "magnitude": _to_bool(
+                companion_cfg["magnitude"],
+                "RANDOM.SIMULATION.COMPANION.RANDOMIZE.magnitude",
+            ),
+            "temperature_range": _parse_closed_range(
+                companion_cfg["temperature_range"],
+                "RANDOM.SIMULATION.COMPANION.RANDOMIZE.temperature_range",
+            ),
+            "magnitude_range": _parse_closed_range(
+                companion_cfg["magnitude_range"],
+                "RANDOM.SIMULATION.COMPANION.RANDOMIZE.magnitude_range",
+            ),
+        },
+        "raw": random_cfg,
+    }
+
+
 def resolve_simulation_config(mode: str, config_path: str | Path = "scripts/parameters.yaml") -> dict[str, Any]:
     mode_norm = mode.strip().lower()
     if mode_norm == "bulk":
         return resolve_bulk_simulation_config(config_path)
     if mode_norm == "single":
         return resolve_single_simulation_config(config_path)
-    raise ValueError("mode must be 'bulk' or 'single'.")
+    if mode_norm == "random":
+        return resolve_random_simulation_config(config_path)
+    raise ValueError("mode must be 'bulk', 'single' or 'random'.")

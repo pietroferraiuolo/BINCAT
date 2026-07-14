@@ -82,7 +82,8 @@ class CCD:
         self.ccd_pxscale_x = kwargs.get("pixel_scale_x", 177 * _u.mas / _u.pixel)
         self.ccd_pxscale_factor = (self.ccd_pxscale_y / self.ccd_pxscale_x).value
         self.full_well_capacity = 190000 * _u.electron
-        self.gain = kwargs.get("gain", 2 * _u.electron / _u.adu)
+        self.max_ADU = 65535 * _u.adu
+        self.gain = kwargs.get("gain", 3.9 * _u.electron / _u.adu)
         self.fov = (self.ccd_pixels[0] * self.ccd_pxscale_x, self.ccd_pixels[1] * self.ccd_pxscale_y)
 
         ### Primary mirror's Area

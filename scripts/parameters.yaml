@@ -9,14 +9,14 @@ BULK.SIMULATION:
   companion_star_temperature: 5800 # K
   distance: np.arange(20,221, 5) # mas
   angle: 90 # degrees
-  shot_noise: false
-  ron: false
+  shot_noise: true
+  ron: true
 
 
 SINGLE.SIMULATION:
 
   band: 'gaia_g' # photometric band to use for the simulation
-  distance: 500
+  distance: 100
   angle: 90
   shot_noise: false
   ron: false
@@ -24,11 +24,33 @@ SINGLE.SIMULATION:
   CENTRAL.STAR:
     temperature: 5800
     spectral_type: null
-    magnitude: 10
+    magnitude: 12
 
   COMPANION.STAR:
     temperature: 5340
     spectral_type: null
-    magnitude: 10
+    magnitude: 8
 
 
+RANDOM.SIMULATION:
+
+  n_iter: 3000
+
+  angle: 180
+  allow_duplicate_distances: true
+  distance_range: [10,300]
+
+  shot_noise: true
+  ron: true
+
+  CENTRAL.RANDOMIZE:
+    temperature: true
+    magnitude: true
+    magnitude_range: [8,19]
+    temperature_range: [4000, 20000]
+
+  COMPANION.RANDOMIZE:
+    temperature: true
+    magnitude: true
+    magnitude_range: [8,19]
+    temperature_range: [4000, 20000]

@@ -149,6 +149,8 @@ class GaiaSimulator:
             Whether to add read-out noise to the images. Default is False.
         shot_noise : bool, optional
             Whether to add photon shot noise to the images. Default is False.
+        digitization : bool, optional
+            Whether to digitize the images to 16-bit ADU counts. Default is False.
         map_dtype : str, optional
             Data type for the convolved maps. Default is "float32". Can be "float
             32" or "float64".
@@ -211,8 +213,7 @@ class GaiaSimulator:
 
             # ---- Shot Noise ---- #
             if shot_noise:
-                noisy = _np.random.poisson(convolved).astype(_np.float32)
-                convolved = noisy
+                convolved = _np.random.poisson(convolved).astype(_np.float32)
                 self._logger.info(f"Image {i:05d}: photon shot noise added.")
             # ------------------- #
 
@@ -240,13 +241,28 @@ class GaiaSimulator:
 
             # ---- Read-Out Noise ---- #
             if read_out_noise:
-                ron = (
-                    _np.random.normal(0, _np.random.randint(2, 6), size=psf_2d.shape) * 0.5
-                )
-                ron[ron < 0] = 0
+                ron_rms = 3.0
+                ron = _np.random.normal(0.0, ron_rms, size=psf_2d.shape)
                 psf_2d += ron
                 self._logger.info(f"Image {i:05d}: read-out noise added.")
             # ------------------------ #
+
+            # ---- Digitization & Gain (Electron-to-ADU) ---- #
+            # Representative Gaia configuration values
+            gain = self.ccd.gain    # e-/ADU
+            bias_adu = 1700.0 * _u.adu  # Electronic baseline offset in ADU
+            
+            # 1. Convert physical electrons to digital ADU counts and add bias
+            adu_array = (psf_2d*_u.electron / gain).to_value(_u.adu) + bias_adu.to_value(_u.adu)
+            
+            # 2. Round to the nearest discrete integer count
+            adu_array = _np.round(adu_array)
+            
+            # 3. Apply 16-bit ADC saturation boundaries (0 to 65535)
+            psf_2d = _np.clip(adu_array, 0, self.ccd.max_ADU.value).astype(_np.uint16)
+            
+            self._logger.info(f"Image {i:05d}: Digitized to 16-bit ADU counts.")
+            # ------------------------------------------------ #
 
             psf_x, psf_y = computeXandYpsf(psf=psf_2d, window=self.ccd._window)
             self._logger.info(f"Image {i:05d}: PSF X and Y computed.")
@@ -408,7 +424,9 @@ class GaiaSimulator:
         header = {}
         header["DISTMAS"] = (self.distance, "Angular separation in mas")
         header["M1"] = (self.M1, "Magnitude of the primary (central) star")
+        header["TEFF1"] = (self.central_star.temperature.value, "Effective temperature in K")
         header["M2"] = (self.M2, "Magnitude of the secondary (companion) star")
+        header["TEFF2"] = (self.companion_star.temperature.value, "Effective temperature in K")
         header['GMAG'] = (self._Mtot, "Calibration G-Magnitude of the expected source")
         header["BAND"] = (self._bands["band"][0], "Photometric band")
         header["WAVELEN"] = (

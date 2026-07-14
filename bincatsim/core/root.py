@@ -15,3 +15,6 @@ SIM_RECORD_FILE: str = join(SIMPATH, "simulations_record.csv")
 
 def SIMULATION_PARAMETERS_PATH(tn: str) -> str:
     return join(OBS_DATA_PATH, tn, f"simulation_parameters.yaml")
+
+def SIM_RECORD_FILE_V(version: int) -> str:
+    return join(SIMPATH, f"simulations_record_v{version}.csv")
